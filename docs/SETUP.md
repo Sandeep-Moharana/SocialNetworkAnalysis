@@ -106,6 +106,8 @@ Check it at http://localhost:9870 → *Utilities* → *Browse the file system* �
 | Task | Command |
 |---|---|
 | Start | `docker compose up -d` |
+| Run a job | `.\scripts\submit.ps1 jobs\01_build_graph.py --dataset facebook` |
+| Re-parse a dataset after changing `config/sna.ini` or the loader | add `--rebuild` to `01_build_graph.py` |
 | Add a Python package for jobs | add it to `docker/spark/requirements.txt`, then `docker compose up -d --build` |
 | Pause (keeps HDFS data) | `docker compose stop` |
 | Remove everything (**HDFS data lost**; re-run `load_to_hdfs.ps1`) | `docker compose down` |

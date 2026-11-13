@@ -12,5 +12,6 @@ $compose = Join-Path $root "docker-compose.yml"
 # jobs\foo.py (Windows path on the host) -> /app/jobs/foo.py (Linux path in the container)
 $containerPath = "/app/" + (($Job -replace '^\.[\\/]', '') -replace '\\', '/')
 
-docker compose -f $compose exec spark-client /opt/spark/bin/spark-submit $containerPath @JobArgs
+# spark_submit.sh (inside the container) packages src/sna for the executors, then runs spark-submit.
+docker compose -f $compose exec spark-client bash /app/scripts/container/spark_submit.sh $containerPath @JobArgs
 exit $LASTEXITCODE

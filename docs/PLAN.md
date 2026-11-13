@@ -139,12 +139,17 @@ SocialNetworkAnalysis/
 ├── docker-compose.yml        # the Phase 1 cluster
 ├── docker/                   # cluster config (hadoop.env, spark-defaults.conf)
 ├── scripts/                  # host-side helpers (download, load to HDFS, submit)
+├── config/sna.ini            # app settings: HDFS layout + dataset registry
 ├── jobs/                     # thin entry points: parse args → call src/sna → write
-├── src/sna/                  # (step 4) reusable library
-│   ├── config.py             #   paths, dataset registry
+├── src/sna/                  # reusable library (step 1.4 ✅)
+│   ├── config.py             #   reads config/sna.ini
 │   ├── session.py            #   SparkSession + checkpoint dir
-│   ├── loaders.py            #   dataset → GraphFrame
-│   └── features/
+│   ├── loaders.py            #   raw edge list → cleaned Parquet → GraphFrame
+│   ├── storage.py            #   writes results to HDFS
+│   ├── cli.py                #   --dataset / --config shared by all jobs
+│   └── features/             #   analysis functions: GraphFrame in, DataFrames out
+│       ├── stats.py          #     step 1.5 ✅ degrees, components, triangles, clustering
+│       └── influencers.py    #     step 1.6 ✅ degree centrality, PageRank, ranking comparison
 │       ├── stats.py
 │       ├── influencers.py
 │       ├── communities.py
@@ -159,6 +164,19 @@ SocialNetworkAnalysis/
 - **Loaders**: `load(spark, dataset) -> GraphFrame`. A registry maps dataset names to file paths and formats. Adding a dataset means adding one registry entry.
 - **Features**: plain functions `analyze(graph, **params) -> DataFrame`. They know nothing about paths or clusters, so they are easy to test on tiny graphs.
 - **Jobs** handle the I/O. **Config** holds paths and hosts. **Features** stay pure.
+
+### Where settings live (and what changes for a multi-PC cluster)
+
+| Setting | File | Changes in Phase 2? |
+|---|---|---|
+| Spark master URL, HDFS NameNode (`fs.defaultFS`), memory | `docker/spark-defaults.conf` | **yes**: real IPs/hostnames |
+| HDFS replication, ports | `docker/hadoop.env` | **yes**: replication 2 |
+| Which containers run on which machine | `docker-compose.yml` (one per role) | **yes** |
+| HDFS folder layout, dataset formats | `config/sna.ini` | no (paths have no host part) |
+| Analytics code | `src/sna`, `jobs/` | **no** |
+
+`scripts/container/spark_submit.sh` zips `src/sna` and sends it with `--py-files`, so
+executors on other PCs can import our package without a shared folder.
 
 ### Feature → algorithm map
 
