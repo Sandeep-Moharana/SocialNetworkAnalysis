@@ -1,0 +1,76 @@
+# Phase 1 cluster: everything runs on ONE machine, but each "node" is its own
+# container, so this is a real (small) distributed setup.
+#
+#   docker compose up -d      start the cluster
+#   docker compose ps         see what's running
+#   docker compose stop       stop, KEEP HDFS data
+#   docker compose down       stop and DELETE containers (HDFS data is lost;
+#                             re-run scripts\load_to_hdfs.ps1 afterwards)
+name: sna
+
+x-spark-image: &spark_image apache/spark:3.5.3-scala2.12-java17-python3-ubuntu
+
+services:
+  # ------------------------------------------------------------------
+  # Storage layer: HDFS
+  # ------------------------------------------------------------------
+  namenode:                       # keeps the file-system metadata (which blocks are where)
+    image: apache/hadoop:3.3.6
+    hostname: namenode
+    command: ["hdfs", "namenode"]
+    env_file: ./docker/hadoop.env
+    environment:
+      ENSURE_NAMENODE_DIR: /tmp/hadoop-hadoop/dfs/name   # formats HDFS on first start only
+    ports:
+      - "9870:9870"               # HDFS web UI -> http://localhost:9870
+    volumes:
+      - ./data:/data              # host data/ folder, used by 'hdfs dfs -put'
+
+  datanode:                       # stores the actual data blocks
+    image: apache/hadoop:3.3.6
+    hostname: datanode
+    command: ["hdfs", "datanode"]
+    env_file: ./docker/hadoop.env
+    depends_on: [namenode]
+
+  # ------------------------------------------------------------------
+  # Compute layer: Spark standalone cluster
+  # ------------------------------------------------------------------
+  spark-master:                   # hands out executors to applications
+    image: *spark_image
+    hostname: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    ports:
+      - "8080:8080"               # Spark master UI -> http://localhost:8080
+
+  spark-worker-1:                 # runs executors (the processes that do the work)
+    image: *spark_image
+    hostname: spark-worker-1
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker",
+              "spark://spark-master:7077", "--cores", "2", "--memory", "2g",
+              "--work-dir", "/tmp/spark-work"]
+    ports:
+      - "8081:8081"
+    depends_on: [spark-master]
+
+  spark-worker-2:
+    image: *spark_image
+    hostname: spark-worker-2
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker",
+              "spark://spark-master:7077", "--cores", "2", "--memory", "2g",
+              "--work-dir", "/tmp/spark-work"]
+    ports:
+      - "8082:8081"
+    depends_on: [spark-master]
+
+  spark-client:                   # "edge node": where our Python driver programs run
+    image: *spark_image
+    hostname: spark-client
+    command: ["tail", "-f", "/dev/null"]   # stay alive; we 'exec' spark-submit into it
+    working_dir: /app
+    ports:
+      - "4040:4040"               # UI of the currently running job -> http://localhost:4040
+    volumes:
+      - ./:/app                   # our code (jobs/, src/) is visible inside the container
+      - ./docker/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    depends_on: [spark-master, namenode]
