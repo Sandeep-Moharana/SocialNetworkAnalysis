@@ -45,7 +45,7 @@ The original flow was: plan → setup → dataset → basic flow → bottom-up f
 | FR-7 | **Output**: each job writes results to HDFS as Parquet and prints a short summary | 1 |
 | FR-8 | **CLI**: each feature runs on its own job with arguments (`--dataset`, `--top-k`, `--user`) | 1 |
 | FR-9 | Run the same jobs on a multi-laptop cluster without code changes | 2 |
-| FR-10 | Advanced: k-core, Jaccard / Adamic-Adar recommendation scores, Louvain communities, shortest paths / degrees of separation (modularity score: done early, in step 1.7) | 3 |
+| FR-10 | Advanced: k-core, Jaccard recommendation score, recommendations for all users in batch, Louvain communities, shortest paths / degrees of separation (done early: modularity in 1.7, Adamic-Adar tie-breaker in 1.8) | 3 |
 | FR-11 | Evaluation: hide some edges and measure recommendation precision@K; compare communities with ground truth (com-Youtube) | 3 |
 | FR-12 | Visualization: export subgraphs for Gephi, or a simple notebook/dashboard | 3 |
 
@@ -150,7 +150,8 @@ SocialNetworkAnalysis/
 │   └── features/             #   analysis functions: GraphFrame in, DataFrames out
 │       ├── stats.py          #     step 1.5 ✅ degrees, components, triangles, clustering
 │       ├── influencers.py    #     step 1.6 ✅ degree centrality, PageRank, ranking comparison
-│       └── communities.py    #     step 1.7 ✅ Label Propagation, community profiles, modularity
+│       ├── communities.py    #     step 1.7 ✅ Label Propagation, community profiles, modularity
+│       └── recommend.py      #     step 1.8 ✅ mutual friends + Adamic-Adar, community check
 │       ├── stats.py
 │       ├── influencers.py
 │       ├── communities.py
@@ -186,7 +187,7 @@ executors on other PCs can import our package without a shared folder.
 | Stats | degrees, components, triangles | `g.degrees`, `g.connectedComponents()`, `g.triangleCount()` |
 | Influencers | degree centrality, PageRank | `g.degrees`, `g.pageRank(resetProbability=0.15, maxIter=10)` |
 | Communities | Label Propagation | `g.labelPropagation(maxIter=5)` |
-| Recommendation | mutual friends (open triangles) | `g.find("(a)-[]->(b); (b)-[]->(c); !(a)-[]->(c)")` + group by |
+| Recommendation | mutual friends (open triangles) | DataFrame joins starting from the chosen users (same pattern as the motif `(a)-[]->(b); (b)-[]->(c); !(a)-[]->(c)`, but without building paths for every vertex) |
 | Later | degrees of separation | `g.shortestPaths(landmarks=[...])`, `g.bfs(...)` |
 
 ---

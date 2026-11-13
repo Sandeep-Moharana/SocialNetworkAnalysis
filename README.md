@@ -21,7 +21,7 @@ Phase 1 progress:
 - [x] 1.5 Network statistics: `jobs/02_network_stats.py`
 - [x] 1.6 Influencer detection: `jobs/03_influencers.py`
 - [x] 1.7 Community detection: `jobs/04_communities.py`
-- [ ] 1.8 Friend recommendation
+- [x] 1.8 Friend recommendation: `jobs/05_recommend.py`
 - [ ] 1.9 Tests + results
 
 ## Architecture (Phase 1)
@@ -46,6 +46,7 @@ docker compose up -d --build                  # build our Spark image, start HDF
 .\scripts\submit.ps1 jobs\02_network_stats.py # degrees, components, triangles, clustering
 .\scripts\submit.ps1 jobs\03_influencers.py   # top-10 by degree centrality and PageRank
 .\scripts\submit.ps1 jobs\04_communities.py   # Label Propagation communities + modularity
+.\scripts\submit.ps1 jobs\05_recommend.py --users 460 2627   # "people you may know"
 ```
 
 ## Results so far (ego-Facebook)
@@ -103,6 +104,24 @@ a heavy-tailed degree distribution, typical of social networks.
 - **This explains step 1.6:** user 2543 has many friends but low PageRank. Their community
   is extremely dense (59% of all possible pairs are friends): a closed circle where everyone
   knows everyone, with few links to the outside.
+
+### Friend recommendations (mutual friends, Adamic-Adar as tie-breaker)
+
+```
+--- User 460 (66 friends) ---
+  rank  suggest  mutual  adamic-adar  same comm.  because you both know
+     1      483      41        9.968  yes         348, 353, 366, 370, 373, ...
+     2      561      41        9.851  yes         348, 353, 360, 370, 373, ...
+     3      513      39        9.183  yes         348, 353, 360, 366, 373, ...
+```
+
+- Checked against a plain-Python brute force for 8 users: identical candidates, scores and order.
+- **85% of suggestions fall in the user's own community** (50 random non-ego users, top 10 each).
+  The two features agree without using each other's results.
+- Ego users (0, 107, …) are the exception: they already know their whole circle, so every
+  suggestion comes from another circle (0% same community). Correct behavior, not a bug.
+- Ties are common (user 460: ranks 1 and 2 both have 41 mutual friends). Adamic-Adar breaks them by
+  counting mutual friends who are *not* hubs as stronger evidence.
 
 ## Configuration
 
