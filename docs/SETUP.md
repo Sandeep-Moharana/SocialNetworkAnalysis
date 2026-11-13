@@ -59,9 +59,14 @@ git tag v0.0; git push --tags
 ## 3. Start the cluster
 
 ```powershell
-docker compose up -d        # first time downloads about 2 GB of images
-docker compose ps           # all 6 services should be "running"
+docker compose up -d --build   # first time: downloads about 2 GB of images and builds our Spark image
+docker compose ps              # all 6 services should be "running"
 ```
+
+> **Why `--build`?** The Spark containers use our own image, `sna-spark` ([docker/spark/Dockerfile](../docker/spark/Dockerfile)).
+> It is the official Spark image plus the Python packages in
+> [docker/spark/requirements.txt](../docker/spark/requirements.txt) (for example, numpy, which GraphFrames needs).
+> Use `--build` the first time and every time you change those two files. A plain `docker compose up -d` is enough otherwise.
 
 Open these in a browser:
 
@@ -101,6 +106,7 @@ Check it at http://localhost:9870 → *Utilities* → *Browse the file system* �
 | Task | Command |
 |---|---|
 | Start | `docker compose up -d` |
+| Add a Python package for jobs | add it to `docker/spark/requirements.txt`, then `docker compose up -d --build` |
 | Pause (keeps HDFS data) | `docker compose stop` |
 | Remove everything (**HDFS data lost**; re-run `load_to_hdfs.ps1`) | `docker compose down` |
 | Logs of one service | `docker compose logs -f spark-worker-1` |
@@ -115,6 +121,7 @@ Check it at http://localhost:9870 → *Utilities* → *Browse the file system* �
 | Spark UI shows 0 workers | `docker compose logs spark-worker-1`; usually the master was not ready yet. Run `docker compose restart spark-worker-1 spark-worker-2` |
 | Job hangs on *"Initial job has not accepted any resources"* | Workers are missing or have too little memory. Check the :8080 UI |
 | `Name node is in safe mode` | Wait 30 s after start-up, or `docker compose exec namenode hdfs dfsadmin -safemode leave` |
+| `ModuleNotFoundError: No module named 'numpy'` (or another package) | Spark containers run the plain image. Run `docker compose up -d --build`; check with `docker compose exec spark-client python3 -c "import numpy"` |
 | GraphFrames download fails | Container needs internet. Retry; check proxy/VPN |
 | Laptop runs out of RAM | Remove `spark-worker-2` from `docker-compose.yml` and lower `memory` in `.wslconfig` |
 | `scripts cannot be loaded ... running scripts is disabled` | Run step 1.4 (`Set-ExecutionPolicy`) |

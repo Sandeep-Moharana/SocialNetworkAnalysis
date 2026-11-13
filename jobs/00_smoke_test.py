@@ -42,7 +42,11 @@ g = GraphFrame(vertices, edges)
 print("[2] In-degrees:")
 g.inDegrees.orderBy("inDegree", ascending=False).show()
 
-ranks = g.pageRank(resetProbability=0.15, maxIter=10).vertices
+# Use tol (run until scores change by less than tol), not a fixed maxIter:
+# Alice and Bob follow each other, so rank flows back and forth between them and
+# with too few iterations their order flips each round. Converged answer, by hand:
+# Alice ~1.884, Bob ~1.815, Carol = Dave = 0.15 (nobody follows them).
+ranks = g.pageRank(resetProbability=0.15, tol=0.0001).vertices
 print("[3] PageRank:")
 ranks.select("id", "name", "pagerank").orderBy("pagerank", ascending=False).show()
 

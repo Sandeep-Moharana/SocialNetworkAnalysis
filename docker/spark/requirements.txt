@@ -1,0 +1,6 @@
+# Python packages installed into the Spark image (driver + executors).
+# Pin versions so every machine (including Phase 2 laptops) gets the same ones.
+
+# Needed by GraphFrames: its Python wrapper imports pyspark.ml, which imports numpy.
+# Stay on 1.x: Spark 3.5 does not fully support NumPy 2.
+numpy==1.26.4

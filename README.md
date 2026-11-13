@@ -14,9 +14,9 @@ stored in HDFS, processed with Apache Spark, and analyzed with GraphFrames.
 | 3 | Bigger datasets, more algorithms, evaluation, visualization | ⏳ |
 
 Phase 1 progress:
-- [ ] 1.1 Docker cluster (HDFS + Spark standalone)
-- [ ] 1.2 Smoke test (GraphFrames PageRank + HDFS round trip)
-- [ ] 1.3 Dataset download + load into HDFS
+- [x] 1.1 Docker cluster (HDFS + Spark standalone)
+- [x] 1.2 Smoke test (GraphFrames PageRank + HDFS round trip)
+- [x] 1.3 Dataset download + load into HDFS
 - [ ] 1.4 Core pipeline (config, session, loader)
 - [ ] 1.5 Network statistics
 - [ ] 1.6 Influencer detection
@@ -38,7 +38,7 @@ Details: [docs/PLAN.md](docs/PLAN.md)
 Prerequisites: Docker Desktop (WSL2), Git. Full guide: [docs/SETUP.md](docs/SETUP.md).
 
 ```powershell
-docker compose up -d                          # start HDFS + Spark
+docker compose up -d --build                  # build our Spark image, start HDFS + Spark
 .\scripts\submit.ps1 jobs\00_smoke_test.py    # verify the stack
 .\scripts\download_dataset.ps1                # get ego-Facebook
 .\scripts\load_to_hdfs.ps1                    # put it in HDFS

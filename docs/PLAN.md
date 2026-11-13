@@ -71,7 +71,7 @@ The original flow was: plan → setup → dataset → basic flow → bottom-up f
 |---|---|---|---|
 | Docker Desktop (WSL2 backend) | latest | Runs every node as a container | Avoids Windows/Hadoop issues; same setup on every machine |
 | Hadoop HDFS | 3.3.6 (`apache/hadoop`) | Distributed storage | Required by the project; Spark reads from it natively |
-| Apache Spark | 3.5.3 (`apache/spark`, Java 17, Python 3) | Distributed compute | Stable line that GraphFrames supports |
+| Apache Spark | 3.5.3 (our `sna-spark` image = `apache/spark` + numpy; Java 17, Python 3.10) | Distributed compute | Stable line that GraphFrames supports |
 | GraphFrames | `0.8.4-spark3.5-s_2.12` | Graph algorithms on DataFrames | PageRank, LPA, components, triangles, motifs, BFS |
 | PySpark (Python) | bundled with Spark | Our code | Easiest to learn and read |
 | Git + GitHub | latest | Version control, progress tracking | Shows continuous progress |
