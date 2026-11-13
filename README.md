@@ -20,7 +20,7 @@ Phase 1 progress:
 - [x] 1.4 Core pipeline (config, session, loader): `jobs/01_build_graph.py`
 - [x] 1.5 Network statistics: `jobs/02_network_stats.py`
 - [x] 1.6 Influencer detection: `jobs/03_influencers.py`
-- [ ] 1.7 Community detection
+- [x] 1.7 Community detection: `jobs/04_communities.py`
 - [ ] 1.8 Friend recommendation
 - [ ] 1.9 Tests + results
 
@@ -45,6 +45,7 @@ docker compose up -d --build                  # build our Spark image, start HDF
 .\scripts\submit.ps1 jobs\01_build_graph.py   # build the graph: 4,039 vertices, 88,234 connections
 .\scripts\submit.ps1 jobs\02_network_stats.py # degrees, components, triangles, clustering
 .\scripts\submit.ps1 jobs\03_influencers.py   # top-10 by degree centrality and PageRank
+.\scripts\submit.ps1 jobs\04_communities.py   # Label Propagation communities + modularity
 ```
 
 ## Results so far (ego-Facebook)
@@ -79,6 +80,29 @@ a heavy-tailed degree distribution, typical of social networks.
   Each one is the hub that connects their own circle of friends to everyone else.
 - User **3980 has only 59 friends but ranks 8th** by PageRank: few connections, but to the right people.
   Users 2543, 2347, … have more friends, but inside one dense circle, so they rank lower.
+
+### Communities (Label Propagation, 10 rounds)
+
+| Metric | Value |
+|---|---|
+| Communities | 70 (median size 15, largest 476 = 11.8% of users) |
+| Connections inside a community | 92.2% |
+| Modularity Q | **0.808** (> 0.3 = clear structure; 5 rounds: 0.789, 20 rounds: 0.813) |
+
+| Largest communities | Size | Density inside | Leader (friends) |
+|---|---|---|---|
+| 1205 | 476 | 0.15 | 107 (1,045) |
+| 3277 | 450 | 0.08 | 1684 (792) |
+| 559 | 327 | 0.10 | 483 (231) |
+| 2344 | 295 | 0.23 | 1912 (755) |
+| 2353 | 237 | **0.59** | 2543 (294) |
+| 200 | 228 | 0.08 | 0 (347) |
+
+- **The ego users lead communities:** 6 of the 10 largest communities are led by one of the
+  ego users that PageRank found in step 1.6 (107, 1684, 1912, 0, 686, 3437).
+- **This explains step 1.6:** user 2543 has many friends but low PageRank. Their community
+  is extremely dense (59% of all possible pairs are friends): a closed circle where everyone
+  knows everyone, with few links to the outside.
 
 ## Configuration
 

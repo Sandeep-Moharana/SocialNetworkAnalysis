@@ -45,7 +45,7 @@ The original flow was: plan → setup → dataset → basic flow → bottom-up f
 | FR-7 | **Output**: each job writes results to HDFS as Parquet and prints a short summary | 1 |
 | FR-8 | **CLI**: each feature runs on its own job with arguments (`--dataset`, `--top-k`, `--user`) | 1 |
 | FR-9 | Run the same jobs on a multi-laptop cluster without code changes | 2 |
-| FR-10 | Advanced: k-core, Jaccard / Adamic-Adar recommendation scores, modularity score, shortest paths / degrees of separation | 3 |
+| FR-10 | Advanced: k-core, Jaccard / Adamic-Adar recommendation scores, Louvain communities, shortest paths / degrees of separation (modularity score: done early, in step 1.7) | 3 |
 | FR-11 | Evaluation: hide some edges and measure recommendation precision@K; compare communities with ground truth (com-Youtube) | 3 |
 | FR-12 | Visualization: export subgraphs for Gephi, or a simple notebook/dashboard | 3 |
 
@@ -149,7 +149,8 @@ SocialNetworkAnalysis/
 │   ├── cli.py                #   --dataset / --config shared by all jobs
 │   └── features/             #   analysis functions: GraphFrame in, DataFrames out
 │       ├── stats.py          #     step 1.5 ✅ degrees, components, triangles, clustering
-│       └── influencers.py    #     step 1.6 ✅ degree centrality, PageRank, ranking comparison
+│       ├── influencers.py    #     step 1.6 ✅ degree centrality, PageRank, ranking comparison
+│       └── communities.py    #     step 1.7 ✅ Label Propagation, community profiles, modularity
 │       ├── stats.py
 │       ├── influencers.py
 │       ├── communities.py
