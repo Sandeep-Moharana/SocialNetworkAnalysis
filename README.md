@@ -9,7 +9,7 @@ stored in HDFS, processed with Apache Spark, and analyzed with GraphFrames.
 | Phase | Description | Status |
 |---|---|---|
 | 0 | Plan, architecture, repo | ✅ |
-| 1 | MVP on one machine (Dockerized HDFS + Spark cluster, ego-Facebook dataset) | 🚧 in progress |
+| 1 | MVP on one machine (Dockerized HDFS + Spark cluster, ego-Facebook dataset) | ✅ `v0.1` |
 | 2 | Real cluster on multiple laptops | ⏳ |
 | 3 | Bigger datasets, more algorithms, evaluation, visualization | ⏳ |
 
@@ -22,7 +22,7 @@ Phase 1 progress:
 - [x] 1.6 Influencer detection: `jobs/03_influencers.py`
 - [x] 1.7 Community detection: `jobs/04_communities.py`
 - [x] 1.8 Friend recommendation: `jobs/05_recommend.py`
-- [ ] 1.9 Tests + results
+- [x] 1.9 Tests + results: 35 unit tests (`scripts\test.ps1`), full pipeline (`scripts\run_all.ps1`)
 
 ## Architecture (Phase 1)
 
@@ -47,7 +47,22 @@ docker compose up -d --build                  # build our Spark image, start HDF
 .\scripts\submit.ps1 jobs\03_influencers.py   # top-10 by degree centrality and PageRank
 .\scripts\submit.ps1 jobs\04_communities.py   # Label Propagation communities + modularity
 .\scripts\submit.ps1 jobs\05_recommend.py --users 460 2627   # "people you may know"
+
+.\scripts\test.ps1                            # unit tests (tiny graphs, known answers)
+.\scripts\run_all.ps1                         # jobs 01-05 in order, with a timing table
 ```
+
+## Testing
+
+| Check | Command | What it proves |
+|---|---|---|
+| Unit tests (35) | `.\scripts\test.ps1` | Every analysis function gives the hand-calculated answer on tiny graphs. Runs in Spark local mode: no workers or HDFS needed, about 40 s |
+| Smoke test | `.\scripts\submit.ps1 jobs\00_smoke_test.py` | The cluster works: both workers, GraphFrames, HDFS |
+| Full pipeline | `.\scripts\run_all.ps1` | All jobs run end to end on real data |
+
+Each test file in [tests/](tests/) draws its tiny graph in the docstring and explains
+the expected numbers. Recommendations are also compared with an independent
+plain-Python brute force on random graphs.
 
 ## Results so far (ego-Facebook)
 
@@ -123,6 +138,20 @@ a heavy-tailed degree distribution, typical of social networks.
 - Ties are common (user 460: ranks 1 and 2 both have 41 mutual friends). Adamic-Adar breaks them by
   counting mutual friends who are *not* hubs as stronger evidence.
 
+### Performance baseline (Phase 1: 1 laptop, 2 workers × 2 cores × 2 GB)
+
+| Job | Seconds |
+|---|---|
+| 01 build graph | 12 |
+| 02 network stats | 39 |
+| 03 influencers | 26 |
+| 04 communities | 29 |
+| 05 recommend | 15 |
+| **Total** | **121** |
+
+Every job is under the 2-minute target from [docs/PLAN.md](docs/PLAN.md). About 10 s of each is
+Spark start-up. Phase 2 will run `scripts\run_all.ps1` on the multi-PC cluster and compare.
+
 ## Configuration
 
 | File | Holds | Change it when |
@@ -146,6 +175,8 @@ config/sna.ini       app settings: HDFS paths, datasets
 scripts/             download, load to HDFS, submit jobs
 jobs/                Spark jobs (entry points): load -> build graph -> analyze -> write
 src/sna/             reusable library: config, session, loaders, storage, cli
+src/sna/features/    analysis: stats, influencers, communities, recommend
+tests/               unit tests on tiny graphs (stdlib unittest, no extra packages)
 docs/                plan and setup guide
 data/                local downloads (not committed)
 ```

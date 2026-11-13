@@ -107,6 +107,8 @@ Check it at http://localhost:9870 → *Utilities* → *Browse the file system* �
 |---|---|
 | Start | `docker compose up -d` |
 | Run a job | `.\scripts\submit.ps1 jobs\01_build_graph.py --dataset facebook` |
+| Run all jobs + timing table | `.\scripts\run_all.ps1` |
+| Run the unit tests | `.\scripts\test.ps1` (exit code 0 = all passed) |
 | Re-parse a dataset after changing `config/sna.ini` or the loader | add `--rebuild` to `01_build_graph.py` |
 | Add a Python package for jobs | add it to `docker/spark/requirements.txt`, then `docker compose up -d --build` |
 | Pause (keeps HDFS data) | `docker compose stop` |

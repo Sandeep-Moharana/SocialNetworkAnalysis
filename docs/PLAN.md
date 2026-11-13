@@ -156,7 +156,7 @@ SocialNetworkAnalysis/
 │       ├── influencers.py
 │       ├── communities.py
 │       └── recommend.py
-├── tests/                    # tiny graphs with known answers
+├── tests/                    # step 1.9 ✅ tiny graphs with known answers (unittest, local mode)
 ├── docs/
 └── data/                     # local downloads (git-ignored)
 ```
@@ -213,7 +213,7 @@ Each milestone is a Git tag, so progress is easy to show.
 - [x] Requirements, architecture, stack (this document)
 - [ ] Git repo created and pushed to GitHub
 
-### Phase 1: MVP on one machine → `v0.1`
+### Phase 1: MVP on one machine → `v0.1` ✅ (all steps done, results in the README)
 | Step | Work | Definition of done |
 |---|---|---|
 | 1.1 Setup | WSL2, Docker, Git, cluster `docker compose up` | HDFS UI shows 1 live DataNode. Spark UI shows 2 workers |

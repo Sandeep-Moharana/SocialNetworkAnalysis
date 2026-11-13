@@ -29,6 +29,8 @@ from sna.features.stats import neighbor_counts
 
 # How many mutual friends to list as the "because you both know ..." explanation.
 EXPLAIN_MUTUALS = 5
+# Adamic-Adar is rounded to this many decimals so equal scores really tie (see recommend()).
+AA_DECIMALS = 9
 
 
 def friends_of_friends(graph: GraphFrame, users: List[int]) -> DataFrame:
@@ -64,7 +66,11 @@ def recommend(graph: GraphFrame, users: List[int], k: int = 10) -> DataFrame:
         .groupBy("user", "candidate")
         .agg(
             F.count("*").alias("mutual_friends"),
-            F.sum(1.0 / F.log("neighbors")).alias("adamic_adar"),     # F.log = natural log
+            # F.log = natural log. Rounded because floating-point sums depend on the ORDER
+            # of the additions, which depends on how data is split over machines. Without
+            # rounding, two equal scores could differ in the 16th decimal and their order
+            # would change between runs/clusters. Rounded, equal scores tie and the id decides.
+            F.round(F.sum(1.0 / F.log("neighbors")), AA_DECIMALS).alias("adamic_adar"),
             F.slice(F.sort_array(F.collect_list("friend")), 1, EXPLAIN_MUTUALS).alias("mutual_sample"),
         )
     )
