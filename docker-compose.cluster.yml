@@ -1,0 +1,34 @@
+# Phase 2 add-on for the MASTER laptop (yours). Never used on its own:
+#
+#   .\scripts\cluster_up.ps1
+#   = docker compose -f docker-compose.yml -f docker-compose.cluster.yml up -d
+#
+# What it adds to docker-compose.yml:
+#   1. extra_hosts: how our containers find the friends' PCs. A friend's worker
+#      introduces itself as "worker-<name>"; here that name means their Wi-Fi IP.
+#   2. spark-worker-2 is switched off: one worker per PC (it also could not
+#      publish port 7079, which spark-worker-1 already uses).
+#
+# Names and IPs come from .env (copy .env.master.example). Guide: docs/PHASE2_SETUP.md.
+# The HDFS containers are deliberately untouched, so switching between Phase 1 and
+# Phase 2 mode never recreates them (that would wipe HDFS).
+
+# Every container that talks to executors on other PCs needs the friends' names:
+#   spark-master   -> starts executors on worker-<name>
+#   spark-client   -> the driver fetches results from executors
+#   spark-worker-1 -> our executor exchanges shuffle data with theirs
+x-friends: &friends
+  extra_hosts:
+    - "worker-${FRIEND_A:?set FRIEND_A in .env}:${FRIEND_A_IP:?set FRIEND_A_IP in .env}"
+    - "worker-${FRIEND_B:?set FRIEND_B in .env}:${FRIEND_B_IP:?set FRIEND_B_IP in .env}"
+    # Step 2.4 (HDFS on friends' PCs) adds "datanode-<name>" lines here.
+
+services:
+  spark-master:
+    <<: *friends
+  spark-client:
+    <<: *friends
+  spark-worker-1:
+    <<: *friends
+  spark-worker-2:
+    scale: 0

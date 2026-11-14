@@ -2,6 +2,9 @@
 data/*
 !data/.gitkeep
 
+# Phase 2: per-machine names + IPs (templates: .env.master.example, .env.worker.example)
+.env
+
 # Python
 __pycache__/
 *.py[cod]

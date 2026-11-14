@@ -10,7 +10,7 @@ stored in HDFS, processed with Apache Spark, and analyzed with GraphFrames.
 |---|---|---|
 | 0 | Plan, architecture, repo | ✅ |
 | 1 | MVP on one machine (Dockerized HDFS + Spark cluster, ego-Facebook dataset) | ✅ `v0.1` |
-| 2 | Real cluster on multiple laptops | ⏳ |
+| 2 | Real cluster on multiple laptops | 🚧 in progress |
 | 3 | Bigger datasets, more algorithms, evaluation, visualization | ⏳ |
 
 Phase 1 progress:
@@ -23,6 +23,13 @@ Phase 1 progress:
 - [x] 1.7 Community detection: `jobs/04_communities.py`
 - [x] 1.8 Friend recommendation: `jobs/05_recommend.py`
 - [x] 1.9 Tests + results: 35 unit tests (`scripts\test.ps1`), full pipeline (`scripts\run_all.ps1`)
+
+Phase 2 progress ([guide](docs/PHASE2_SETUP.md)):
+- [x] 2.1 Cluster config: fixed names + ports, master/worker compose files, setup scripts (tested with a simulated friend PC)
+- [ ] 2.2 First friend's PC joins as a Spark worker
+- [ ] 2.3 Second friend, timing vs Phase 1, fault-tolerance demo
+- [ ] 2.4 HDFS across PCs (DataNode per friend, replication 2)
+- [ ] 2.5 Results, tag `v0.2`
 
 ## Architecture (Phase 1)
 
@@ -159,6 +166,7 @@ Spark start-up. Phase 2 will run `scripts\run_all.ps1` on the multi-PC cluster a
 | [config/sna.ini](config/sna.ini) | HDFS folder layout, dataset formats | adding a dataset |
 | [docker/spark-defaults.conf](docker/spark-defaults.conf) | Spark master URL, HDFS NameNode, memory | moving to another cluster |
 | [docker/hadoop.env](docker/hadoop.env) | HDFS settings (replication, …) | moving to another cluster |
+| `.env` (from [.env.master.example](.env.master.example) / [.env.worker.example](.env.worker.example)) | Phase 2: names and Wi-Fi IPs of the PCs | an IP changes |
 
 The analytics code (`src/sna`, `jobs/`) contains no hosts or paths, so it runs unchanged on any cluster.
 
@@ -169,7 +177,9 @@ Hadoop HDFS 3.3.6 · Apache Spark 3.5.3 (PySpark) · GraphFrames 0.8.4 · Docker
 ## Repository layout
 
 ```
-docker-compose.yml   the cluster
+docker-compose.yml   the cluster (Phase 1; also the master laptop in Phase 2)
+docker-compose.cluster.yml   Phase 2 add-on for the master: friends' names -> IPs
+docker-compose.worker.yml    Phase 2: a friend's PC (one Spark worker)
 docker/              Hadoop + Spark config, our Spark image
 config/sna.ini       app settings: HDFS paths, datasets
 scripts/             download, load to HDFS, submit jobs

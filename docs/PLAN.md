@@ -171,9 +171,10 @@ SocialNetworkAnalysis/
 
 | Setting | File | Changes in Phase 2? |
 |---|---|---|
-| Spark master URL, HDFS NameNode (`fs.defaultFS`), memory | `docker/spark-defaults.conf` | **yes**: real IPs/hostnames |
-| HDFS replication, ports | `docker/hadoop.env` | **yes**: replication 2 |
-| Which containers run on which machine | `docker-compose.yml` (one per role) | **yes** |
+| Spark master URL, HDFS NameNode (`fs.defaultFS`), memory, fixed ports | `docker/spark-defaults.conf` | no: names (`spark-master`, `namenode`) work on every PC |
+| HDFS replication, DataNode name | `docker/hadoop.env` | step 2.4: replication 2 |
+| Which containers run on which machine | `docker-compose.yml` (master, Phase 1), `docker-compose.cluster.yml` (master add-on), `docker-compose.worker.yml` (friend) | written in 2.1 |
+| Which PC has which IP | `.env` per machine (git-ignored; templates `.env.*.example`) | every time IPs change |
 | HDFS folder layout, dataset formats | `config/sna.ini` | no (paths have no host part) |
 | Analytics code | `src/sna`, `jobs/` | **no** |
 
@@ -227,10 +228,46 @@ Each milestone is a Git tag, so progress is easy to show.
 | 1.9 Tests + results | tiny-graph tests, results summary in README | All tests pass |
 
 ### Phase 2: Real cluster (friends' laptops) → `v0.2`
-- Your laptop runs **namenode + spark-master** (+ a worker). Each friend runs **datanode + spark-worker**.
-- All machines on the same Wi-Fi/LAN with fixed IPs or hostnames. Firewall ports open (7077, 8020, 9866, 9870, 8080 + executor ports).
-- HDFS replication = 2. Compare job times on 1 vs N nodes (a nice chart for the report).
-- **Known risk:** Docker Desktop on Windows sits behind NAT, so containers on different laptops can't reach each other easily. Options to evaluate: WSL2 *mirrored networking* + host networking, native Ubuntu, or Docker Swarm. We decide this when we get there; the **application code does not change**, only the deployment config.
+
+Your laptop runs HDFS + spark-master + the driver + 1 worker. Each friend's PC runs 1 Spark worker,
+and later also a DataNode. Guide: [PHASE2_SETUP.md](PHASE2_SETUP.md).
+
+**Networking decision (the known risk).** Docker Desktop on Windows sits behind NAT: a container
+IP (172.x) means nothing to other PCs. We keep Docker Desktop (same setup on every PC, no Linux
+needed) and solve it with two rules:
+1. **Names, not IPs.** Every process advertises a name (`--host`, `spark.driver.host`,
+   `dfs.datanode.hostname`). Inside its container the name means "me". On other PCs,
+   `extra_hosts` (from a per-machine `.env`) maps it to that PC's Wi-Fi IP.
+2. **Fixed ports, the same on both sides** (7077 master, 7078 worker, 7079 executors,
+   7080/7081 driver, 8020/9866 HDFS), published by Docker and opened by `open_firewall.ps1`.
+
+Rejected for now: WSL2 mirrored networking + host networking (Windows 11 only, Docker Engine inside
+WSL instead of Docker Desktop, so a different setup per PC), and Docker Swarm overlay networks
+(the same NAT problems, plus more moving parts).
+
+| Step | Work | Definition of done |
+|---|---|---|
+| 2.1 Cluster config ✅ | names + fixed ports, `docker-compose.cluster.yml` (master), `docker-compose.worker.yml` (friend), `.env` templates, `cluster_up` / `worker_up` / `open_firewall` scripts, guide | Phase 1 unchanged (smoke test, 35 tests). **Simulated friend on one laptop** (worker reached only through the Wi-Fi IP): smoke test + full pipeline pass |
+| 2.2 First friend | one friend's PC joins | Smoke test lists `worker-<friend>` |
+| 2.3 Second friend | 3 PCs, 6 cores | `run_all.ps1` timings vs the 121 s baseline. Fault-tolerance demo: stop a worker during job 02 and the job still finishes |
+| 2.4 HDFS across PCs | a DataNode on each friend's PC, replication 2 | Blocks stored on 2 PCs (`hdfs fsck -files -blocks -locations`). Stop one friend and the data is still readable |
+| 2.5 Results | README section, tag `v0.2` | |
+
+**Design for 2.4 (distributed HDFS).** Prepared in 2.1, but not built yet:
+- Names: a friend's DataNode is `datanode-<NODE_NAME>` (`dfs.datanode.hostname`), next to
+  `worker-<NODE_NAME>`. `extra_hosts` gets one more line per friend.
+- Clients already connect to DataNodes by name (`dfs.client.use.datanode.hostname`, set in 2.1).
+  DataNodes also copy blocks to each other, so add `dfs.datanode.use.datanode.hostname=true`.
+- **NAT catch:** the NameNode sees every remote DataNode arriving from the same Docker gateway IP,
+  and it tells DataNodes apart by *IP + data port*. So each PC needs its **own HDFS ports**
+  (e.g. master 9866/9867, alice 9876/9877, bob 9886/9887) via `dfs.datanode.address` and
+  `dfs.datanode.ipc.address`, kept in `.env`.
+- **Persistent volumes** for the NameNode and DataNode directories, so recreating a container no
+  longer wipes HDFS. The `apache/hadoop` image runs as uid 1000 and Docker creates new volumes as root,
+  so the volume directories need a fix-permissions step.
+- Replication 2: every block lives on 2 PCs, so one laptop can leave.
+- Fallback if NAT keeps fighting: a PC running Linux (or Docker Engine in WSL with mirrored
+  networking) uses `network_mode: host`, with no NAT at all. The application code does not change either way.
 
 ### Phase 3: Scale and extend → `v1.0`
 - Bigger datasets (Epinions → Youtube → LiveJournal).

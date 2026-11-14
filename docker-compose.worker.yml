@@ -1,0 +1,48 @@
+# Phase 2: runs on a FRIEND's PC. One Spark worker that joins the master laptop.
+#
+#   .\scripts\worker_up.ps1
+#   = docker compose -f docker-compose.worker.yml up -d
+#
+# Names and IPs come from .env (copy .env.worker.example). Guide: docs/PHASE2_SETUP.md.
+#
+# How the networking works (Docker on Windows hides containers behind NAT):
+#   - This worker introduces itself as "worker-<NODE_NAME>". Inside this container
+#     the name means "me" (from hostname:); on every other PC, extra_hosts maps it
+#     to THIS PC's Wi-Fi IP, and the published ports below forward to the container.
+#   - The ports must be the same number on both sides ("7078:7078"), because the
+#     number is part of the address the worker advertises.
+#   - Never add this PC's own name to extra_hosts: the worker could not start
+#     ("Cannot assign requested address").
+#
+# This PC needs no code updates: every job sends our Python package and GraphFrames
+# to the executors. Only rebuild (worker_up.ps1 -Build) when docker/spark/ changes.
+name: sna-worker
+
+services:
+  spark-worker:
+    image: sna-spark:3.5.3              # same image as the master laptop: same Spark, Java, Python
+    build: ./docker/spark
+    hostname: worker-${NODE_NAME:?set NODE_NAME in .env}
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker",
+              "spark://spark-master:7077",
+              "--host", "worker-${NODE_NAME}",
+              "--port", "7078",
+              "--cores", "${WORKER_CORES:-2}", "--memory", "${WORKER_MEMORY:-2g}",
+              "--work-dir", "/tmp/spark-work"]
+    ports:
+      - "7078:7078"   # worker RPC: the master starts executors here
+      - "7079:7079"   # executor block manager: shuffle data for the other PCs
+      - "8081:8081"   # worker web UI -> http://<this PC's IP>:8081
+    extra_hosts:
+      # Everything on the master laptop:
+      - "spark-master:${MASTER_IP:?set MASTER_IP in .env}"
+      - "spark-client:${MASTER_IP}"     # the driver: executors fetch tasks + code here
+      - "spark-worker-1:${MASTER_IP}"   # the master laptop's own worker (shuffle data)
+      - "namenode:${MASTER_IP}"         # HDFS metadata
+      - "datanode:${MASTER_IP}"         # HDFS blocks
+      # The other friend's worker (shuffle data):
+      - "worker-${OTHER_FRIEND:?set OTHER_FRIEND in .env}:${OTHER_FRIEND_IP:?set OTHER_FRIEND_IP in .env}"
+    restart: unless-stopped             # comes back by itself after a laptop reboot
+
+  # Step 2.4 (planned): a DataNode service here, so this PC also stores HDFS blocks.
+  # Design and open questions: docs/PLAN.md, Phase 2.

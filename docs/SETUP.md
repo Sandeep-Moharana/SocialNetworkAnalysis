@@ -117,6 +117,8 @@ Check it at http://localhost:9870 → *Utilities* → *Browse the file system* �
 | HDFS shell | `docker compose exec namenode hdfs dfs -ls -R /sna` |
 | PySpark shell on the cluster | `docker compose exec spark-client /opt/spark/bin/pyspark` |
 
+**Phase 2 (friends' PCs as workers):** see [PHASE2_SETUP.md](PHASE2_SETUP.md).
+
 ## Troubleshooting
 
 | Symptom | Fix |

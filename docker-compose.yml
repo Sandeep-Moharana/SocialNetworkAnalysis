@@ -6,6 +6,15 @@
 #   docker compose stop       stop, KEEP HDFS data
 #   docker compose down       stop and DELETE containers (HDFS data is lost;
 #                             re-run scripts\load_to_hdfs.ps1 afterwards)
+#
+# Phase 2 (friends' PCs as workers) reuses this file plus docker-compose.cluster.yml:
+# run scripts\cluster_up.ps1. Guide: docs/PHASE2_SETUP.md.
+#
+# Multi-PC rules, already followed here so Phase 1 and Phase 2 share one file:
+#   1. Every Spark/HDFS process introduces itself by NAME (hostname + --host),
+#      never by its container IP (172.x), which only exists on this laptop.
+#   2. Every port other PCs connect to is FIXED and published with the SAME
+#      number on both sides ("7079:7079"). On one machine this changes nothing.
 name: sna
 
 # All Spark services use OUR image: official Spark + Python packages
@@ -26,6 +35,7 @@ services:
       ENSURE_NAMENODE_DIR: /tmp/hadoop-hadoop/dfs/name   # formats HDFS on first start only
     ports:
       - "9870:9870"               # HDFS web UI -> http://localhost:9870
+      - "8020:8020"               # HDFS metadata RPC: executors on other PCs ask "where are the blocks?"
     volumes:
       - ./data:/data              # host data/ folder, used by 'hdfs dfs -put'
 
@@ -34,6 +44,8 @@ services:
     hostname: datanode
     command: ["hdfs", "datanode"]
     env_file: ./docker/hadoop.env
+    ports:
+      - "9866:9866"               # block data: executors on other PCs read/write files here
     depends_on: [namenode]
 
   # ------------------------------------------------------------------
@@ -43,30 +55,35 @@ services:
     image: *spark_image
     build: *spark_build
     hostname: spark-master
-    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    # --host: advertise the name "spark-master" (default would be the container IP).
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master",
+              "--host", "spark-master"]
     ports:
       - "8080:8080"               # Spark master UI -> http://localhost:8080
+      - "7077:7077"               # workers on other PCs register here
 
   spark-worker-1:                 # runs executors (the processes that do the work)
     image: *spark_image
     build: *spark_build
     hostname: spark-worker-1
+    # --host: the worker AND its executors introduce themselves by this name.
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker",
-              "spark://spark-master:7077", "--cores", "2", "--memory", "2g",
-              "--work-dir", "/tmp/spark-work"]
+              "spark://spark-master:7077", "--host", "spark-worker-1",
+              "--cores", "2", "--memory", "2g", "--work-dir", "/tmp/spark-work"]
     ports:
       - "8081:8081"
+      - "7079:7079"               # executor block manager (spark.blockManager.port): shuffle data for other PCs
     depends_on: [spark-master]
 
-  spark-worker-2:
+  spark-worker-2:                 # Phase 1 only. Phase 2 = one worker per PC (cluster_up.ps1 turns this off)
     image: *spark_image
     build: *spark_build
     hostname: spark-worker-2
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker",
-              "spark://spark-master:7077", "--cores", "2", "--memory", "2g",
-              "--work-dir", "/tmp/spark-work"]
+              "spark://spark-master:7077", "--host", "spark-worker-2",
+              "--cores", "2", "--memory", "2g", "--work-dir", "/tmp/spark-work"]
     ports:
-      - "8082:8081"
+      - "8082:8081"               # no 7079 here: the laptop's port 7079 already belongs to spark-worker-1
     depends_on: [spark-master]
 
   spark-client:                   # "edge node": where our Python driver programs run
@@ -77,6 +94,8 @@ services:
     working_dir: /app
     ports:
       - "4040:4040"               # UI of the currently running job -> http://localhost:4040
+      - "7080:7080"               # driver RPC (spark.driver.port): executors fetch tasks + our code here
+      - "7081:7081"               # driver block manager (spark.driver.blockManager.port)
     volumes:
       - ./:/app                   # our code (jobs/, src/) is visible inside the container
       - ./docker/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
