@@ -145,6 +145,9 @@ every job sends it to the executors.
 | Only one friend's DataNode shows; they replace each other | Both use the same `DATANODE_PORT`. Use 9876 and 9886 |
 | Jobs suddenly take minutes, retries / `FetchFailed` | A laptop's IP changed or someone joined late: everyone re-runs their up script |
 | `required variable ... is missing` | `.env` incomplete: compare with the `.example` file |
+| Registry shows a friend at another friend's IP | Someone's `.env` still says `NODE_NAME=alice` (copied from the example). Fix the name, re-run `worker_up.ps1`, then the master re-runs `cluster_up.ps1` |
+| DataNode keeps restarting; log: `sudo: PAM account management error` | Newer Docker versions break sudo in the Hadoop image. Once: `docker compose -f docker-compose.worker.yml --profile storage run --rm --no-deps --user root --entrypoint chown datanode hadoop:users /hdfs`, then `... --profile storage up -d datanode` |
+| Master can ping a friend but every port times out | The friend's firewall drops everything: re-run `open_firewall.ps1 -Role worker` as admin; remove blocking Docker rules (`Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True \| Where-Object DisplayName -match "docker\|vpnkit\|wsl" \| Remove-NetFirewallRule`); check third-party antivirus firewalls. ("Refused" instead of "timed out" = the container isn't running) |
 
 ## How it works (for the curious)
 

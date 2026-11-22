@@ -36,6 +36,12 @@ class Handler(BaseHTTPRequestHandler):
             ip = query.get("ip", [""])[0]
             if not (VALID_NAME.match(name) and VALID_IP.match(ip)):
                 return self.reply(400, {"error": "use /register?name=<lowercase name>&ip=<a.b.c.d>"})
+            # One laptop = one name. If another name was registered from this IP, that
+            # laptop's .env had the wrong NODE_NAME (e.g. Bob copied the example and
+            # first registered as "alice"): forget the old name, the newest one wins.
+            for old in [n for n, old_ip in NODES.items() if old_ip == ip and n != name]:
+                print(f"[registry] {ip} was '{old}', now '{name}': dropping '{old}'", flush=True)
+                del NODES[old]
             if NODES.get(name) != ip:
                 print(f"[registry] {name} is at {ip}", flush=True)
             NODES[name] = ip

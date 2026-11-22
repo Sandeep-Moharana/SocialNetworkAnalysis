@@ -20,9 +20,10 @@ We built a distributed system that analyzes a real social network (SNAP ego-Face
 communities (Label Propagation) and recommends friends (mutual friends + Adamic-Adar). We first ran it
 as a containerized cluster on one laptop, then on several students' laptops connected over Wi-Fi.
 All results match published reference values and hand-calculated tests (35 unit tests). The whole
-pipeline takes 121 s on one laptop. On two laptops it takes 362 s, because the Wi-Fi link is about 400×
-slower than the network inside one machine. Distributed HDFS with 2 copies per block survived
-the loss of a storage node without losing data and restored its 2 copies within 26 s.
+pipeline takes 121 s on one laptop, 362 s on two and 443 s on three, because the Wi-Fi link is about
+400× slower than the network inside one machine. On three laptops, a job survived a worker leaving
+mid-run, and distributed HDFS (2 copies per block) kept every file readable after losing a storage
+node, then restored its 2 copies automatically.
 
 ## 1. Introduction
 
@@ -119,9 +120,9 @@ Code layout: reusable library in `src/sna/` (config, loaders, `features/`), entr
 
 | | Phase 1 | Phase 2 |
 |---|---|---|
-| Machines | 1 laptop (Windows 11, Docker Desktop) | 2 laptops on a phone hotspot (3rd in progress) |
+| Machines | 1 laptop (Windows 11, Docker Desktop) | 3 laptops on a phone hotspot |
 | Spark | 2 workers × 2 cores × 2 GB | 1 worker per laptop × 2 cores × 2 GB |
-| HDFS | 1 DataNode | 1 DataNode per laptop, replication 2 (tested with simulated nodes) |
+| HDFS | 1 DataNode | 1 DataNode per laptop, replication 2 |
 | Measurement | `scripts/run_all.ps1` (all 5 jobs, wall-clock time per job) | same |
 
 **Validation.** Results were compared against (a) SNAP's published statistics, (b) hand-calculated
@@ -180,18 +181,21 @@ User 460 (66 friends)
 - **85% of suggestions fall in the user's own community** (50 random users), so features 6.3 and 6.4
   agree without using each other's results.
 
-### 6.5 Performance: one laptop vs two laptops
+### 6.5 Performance: one, two and three laptops
 
-| Job | 1 laptop | 2 laptops (hotspot) |
-|---|---|---|
-| 01 build graph | 12 s | 10 s |
-| 02 network stats | 39 s | 92 s |
-| 03 influencers | 26 s | 62 s |
-| 04 communities | 29 s | 95 s |
-| 05 recommend | 15 s | 84 s |
-| **Total** | **121 s** | **362 s** |
+| Job | 1 laptop | 2 laptops (hotspot) | 3 laptops (hotspot) |
+|---|---|---|---|
+| 01 build graph | 12 s | 10 s | 39 s |
+| 02 network stats | 39 s | 92 s | 192 s |
+| 03 influencers | 26 s | 62 s | 75 s |
+| 04 communities | 29 s | 95 s | 114 s |
+| 05 recommend | 15 s | 84 s | 23 s |
+| **Total** | **121 s** | **362 s** | **443 s** |
 
-The results were identical on both setups. To explain the slowdown, we measured:
+The results were identical on all setups, and in every 3-laptop job each laptop ran an executor.
+Over the hotspot the same job varies a lot between runs: an earlier 3-laptop run took 425 s, and
+job 02 took between 121 s and 192 s. Only the trend is meaningful: **more laptops = slower** for this
+small graph. To explain the slowdown, we measured:
 
 | | Inside one laptop | Between laptops (hotspot) |
 |---|---|---|
@@ -201,19 +205,25 @@ The results were identical on both setups. To explain the slowdown, we measured:
 
 ### 6.6 Distributed HDFS and fault tolerance
 
-Tested with two simulated remote DataNodes that connected through the same NAT path as real laptops:
+Tested on the 3 real laptops (3 Spark workers, 3 DataNodes):
 
-| Test | Result |
-|---|---|
-| Replication | all 46 result blocks stored as 2 copies, spread over 3 DataNodes |
-| One DataNode stopped | all 61 files still readable immediately (from the second copy) |
-| Self-healing | node declared dead after ~2.3 min; 2 copies restored **26 s** later |
-| Container restart | data kept (persistent volumes) |
+| Test | How | Result |
+|---|---|---|
+| Replication | `hdfs fsck` | every block stored as 2 copies on 2 different laptops |
+| Worker leaves mid-job | stop one Spark worker 50 s into job 02 | Spark re-ran the lost tasks on the other laptops; job finished in **124 s** (normal: 121 s), same results |
+| DataNode leaves | stop the master's DataNode | all **68 files still readable** from the copies on the friends' laptops |
+| Self-healing | wait | node declared dead after **~2.5 min**; 2 copies of every block restored on the remaining laptops **within 80 s** |
+| Container restart | `docker compose down` / `up` | data kept (persistent volumes) |
+
+The first worker-leaves test **failed**: GraphFrames' connected components saves a checkpoint every 2
+rounds and deletes older ones, and Spark needed a deleted file to recompute the lost work. We switched
+that step to the GraphX implementation, which recovers from lineage (same results; all tests pass).
+Earlier simulations on one laptop gave the same picture (re-replication in 26 s).
 
 ## 7. Discussion
 
 **Correctness.** Every analysis matches an external reference or an independent calculation, and the
-results are identical on 1 and 2 machines.
+results are identical on 1, 2 and 3 machines.
 
 **Why the cluster was slower.** Graph algorithms exchange data between machines (a *shuffle*) at
 almost every step. Over a phone hotspot this costs far more than the computation it saves, and one
@@ -231,9 +241,13 @@ A cluster pays off when the data is large and the network is fast (wired LAN or 
 | Two remote DataNodes kept replacing each other in HDFS | One data port per PC (the NameNode identifies nodes by address + port) |
 | One PC with outdated settings slowed every job | IPs are now discovered automatically at every start (registry) |
 | Hotspot IPs (and even the subnet) change every session | Registry + subnet scan + firewall rule for the local subnet |
+| A laptop registered under a friend's name (copied example `.env`), so two names pointed to one IP | The registry now allows one name per IP: the newest registration wins |
+| `sudo` fails inside the Hadoop image on a newer Docker version (PAM error), so a DataNode kept restarting | Start scripts use sudo only when the storage folder is not yet writable; one-time `chown` as root otherwise |
+| A job failed when a worker left mid-job (GraphFrames deleted a checkpoint it still needed) | Connected components via GraphX, which recomputes lost data from lineage |
+| A firewall silently dropped all connections to one laptop | Fixed on that laptop (rule + blocked Docker rules); diagnosed remotely: "timed out" = firewall, "refused" = service not running |
 
 **Limitations.** Small dataset; LPA results depend on the number of rounds; no data locality between
-Spark and HDFS containers; the 3-laptop run and real-laptop HDFS test are still in progress.
+Spark and HDFS containers; a phone hotspot is a slow, shared network.
 
 ## 8. Testing
 
@@ -241,8 +255,8 @@ Spark and HDFS containers; the 3-laptop run and real-laptop HDFS test are still 
 |---|---|---|
 | Unit tests | 35 tests on tiny hand-drawn graphs (stats, PageRank, modularity, recommendations vs. brute force) | all pass, ~40 s |
 | Smoke test | cluster, GraphFrames and HDFS read/write | pass |
-| End-to-end | all 5 jobs on real data, 1 and 2 laptops | pass, identical results |
-| Fault tolerance | stop a DataNode; check reads and re-replication | pass (simulated) |
+| End-to-end | all 5 jobs on real data, 1, 2 and 3 laptops | pass, identical results |
+| Fault tolerance | stop a Spark worker mid-job; stop a DataNode, check reads and re-replication | pass, on 3 real laptops |
 
 ## 9. Conclusion and Future Work
 
@@ -251,7 +265,7 @@ gives correct results, runs unchanged from one laptop to several, and tolerates 
 node. The main lesson: **distribution only helps when the computation per byte sent is large**. On small
 data and slow Wi-Fi, the network dominates.
 
-Future work: the 3-laptop run with fault-tolerance demos; a faster network; larger datasets (Epinions,
+Future work: a faster network (router or wired LAN); larger datasets (Epinions,
 LiveJournal); data locality between Spark and HDFS; Louvain communities; recommendation evaluation
 (precision@K); visualization.
 

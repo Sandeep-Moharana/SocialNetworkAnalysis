@@ -86,10 +86,17 @@ def local_clustering(graph: GraphFrame) -> DataFrame:
 def components(graph: GraphFrame) -> DataFrame:
     """id, component: vertices with the same component id can reach each other.
 
-    Direction is ignored ("weakly connected" components). The algorithm is iterative
-    and needs the checkpoint directory that sna.session sets.
+    Direction is ignored ("weakly connected" components).
+
+    algorithm="graphx": Spark's classic GraphX implementation. The default
+    ("graphframes") saves every 2nd round to the checkpoint folder and DELETES older
+    rounds. When a worker left mid-job (Phase 2 fault-tolerance test), Spark had to
+    recompute lost data from such a deleted file and the job failed. GraphX recomputes
+    lost pieces from their lineage instead. (Simply turning those checkpoints off is
+    not an option: the query plan then grows every round and runs out of memory.)
+    Same answer: each component is labelled with its smallest vertex id.
     """
-    return graph.connectedComponents().select("id", "component")
+    return graph.connectedComponents(algorithm="graphx").select("id", "component")
 
 
 def vertex_stats(graph: GraphFrame, directed: bool) -> DataFrame:

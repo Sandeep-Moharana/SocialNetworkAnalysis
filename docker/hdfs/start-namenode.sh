@@ -7,8 +7,11 @@
 # files from docker/hadoop.env.
 set -euo pipefail
 
-# A new Docker volume belongs to root; give it to the hadoop user (the image allows sudo).
-sudo chown hadoop:users /hdfs
+# A new Docker volume belongs to root; give it to the hadoop user, ONCE, with sudo.
+# Only when needed: on newer Docker versions sudo fails in this (CentOS 7) image with
+# "sudo: PAM account management error". Then do it once as root:
+#   docker compose run --rm --no-deps --user root --entrypoint chown namenode hadoop:users /hdfs
+[ -w /hdfs ] || sudo chown hadoop:users /hdfs
 
 # Format only the very first time (no metadata yet). A FIXED cluster id means the
 # DataNodes (also on friends' PCs) still match if the NameNode is ever re-formatted.
