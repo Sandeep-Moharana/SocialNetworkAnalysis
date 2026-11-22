@@ -19,7 +19,7 @@ We built a distributed system that analyzes a real social network (SNAP ego-Face
 **GraphFrames**. The system computes network statistics, detects influencers (PageRank), finds
 communities (Label Propagation) and recommends friends (mutual friends + Adamic-Adar). We first ran it
 as a containerized cluster on one laptop, then on several students' laptops connected over Wi-Fi.
-All results match published reference values and hand-calculated tests (35 unit tests). The whole
+All results match published reference values and hand-calculated tests (39 unit tests). The whole
 pipeline takes 121 s on one laptop, 362 s on two and 443 s on three, because the Wi-Fi link is about
 400× slower than the network inside one machine. On three laptops, a job survived a worker leaving
 mid-run, and distributed HDFS (2 copies per block) kept every file readable after losing a storage
@@ -112,6 +112,7 @@ both directions (88,234 friendships → 176,468 directed edges).
 | `03_influencers.py` | Influencer detection | degree centrality, PageRank (until converged, tol 1e-4) | `influencers/` |
 | `04_communities.py` | Community detection | Label Propagation (10 rounds), modularity | `communities/` |
 | `05_recommend.py` | Friend recommendation | friends-of-friends ranked by mutual friends, ties broken by Adamic-Adar | `recommendations/` |
+| `06_export_dashboard.py` | Dashboard export | collects all results, recommendations for every user, force-directed graph layout (numpy) | `ui/data/dashboard.js` |
 
 Code layout: reusable library in `src/sna/` (config, loaders, `features/`), entry points in
 `jobs/`, tests in `tests/`, cluster files in `docker/` and `docker-compose*.yml`.
@@ -126,7 +127,7 @@ Code layout: reusable library in `src/sna/` (config, loaders, `features/`), entr
 | Measurement | `scripts/run_all.ps1` (all 5 jobs, wall-clock time per job) | same |
 
 **Validation.** Results were compared against (a) SNAP's published statistics, (b) hand-calculated
-answers on tiny graphs (35 unit tests), and (c) an independent plain-Python brute force for recommendations.
+answers on tiny graphs (39 unit tests), and (c) an independent plain-Python brute force for recommendations.
 
 ## 6. Results
 
@@ -253,7 +254,7 @@ Spark and HDFS containers; a phone hotspot is a slow, shared network.
 
 | Level | What | Result |
 |---|---|---|
-| Unit tests | 35 tests on tiny hand-drawn graphs (stats, PageRank, modularity, recommendations vs. brute force) | all pass, ~40 s |
+| Unit tests | 39 tests on tiny hand-drawn graphs (stats, PageRank, modularity, recommendations vs. brute force, graph layout) | all pass, ~40 s |
 | Smoke test | cluster, GraphFrames and HDFS read/write | pass |
 | End-to-end | all 5 jobs on real data, 1, 2 and 3 laptops | pass, identical results |
 | Fault tolerance | stop a Spark worker mid-job; stop a DataNode, check reads and re-replication | pass, on 3 real laptops |
@@ -304,9 +305,16 @@ docker compose up -d --build                  # start HDFS + Spark
 .\scripts\download_dataset.ps1                # download ego-Facebook
 .\scripts\load_to_hdfs.ps1                    # copy it into HDFS
 .\scripts\run_all.ps1                         # run jobs 01-05 with a timing table
-.\scripts\test.ps1                            # run the 35 unit tests
+.\scripts\test.ps1                            # run the 39 unit tests
 .\scripts\submit.ps1 jobs\05_recommend.py --users 460   # recommendations for one user
+.\scripts\submit.ps1 jobs\06_export_dashboard.py         # export all results for the dashboard
+start ui\index.html                           # open the dashboard (works offline)
 ```
+
+**Dashboard** (`ui/index.html`, plain HTML + JavaScript, no server or internet needed): overview
+statistics, the whole network drawn as a graph (pan, zoom, click any user), influencers, communities,
+and friend recommendations for any user with the mutual friends that explain them. It only displays
+what the Spark jobs computed; job 06 writes everything it needs into `ui/data/dashboard.js`.
 
 ## Appendix B: Repository Layout
 
@@ -316,8 +324,9 @@ docker-compose.cluster.yml  Phase 2 add-on for the master laptop
 docker-compose.worker.yml   Phase 2: a friend's laptop (Spark worker + DataNode)
 docker/                     Spark image, Spark and HDFS settings, HDFS start scripts
 config/sna.ini              HDFS paths and dataset formats
-src/sna/                    library: config, loading, features/ (stats, influencers, communities, recommend)
-jobs/                       Spark jobs 00-05
+src/sna/                    library: config, loading, features/ (stats, influencers, communities, recommend), layout
+jobs/                       Spark jobs 00-06
+ui/                         dashboard: index.html, app.js, style.css; data/ written by job 06
 tests/                      unit tests
 scripts/                    setup, run, status and firewall scripts
 docs/                       plan and setup guides

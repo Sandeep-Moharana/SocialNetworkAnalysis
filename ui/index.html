@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Social Network Analysis</title>
+<link rel="stylesheet" href="style.css">
+<!-- Results exported by jobs/06_export_dashboard.py (window.SNA_DATA). No server or internet needed. -->
+<script src="data/dashboard.js"></script>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <div class="brand">
+      <h1>Social Network Analysis</h1>
+      <p id="subtitle">HDFS + Spark + GraphFrames</p>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="theme-btn" title="Switch light / dark">◐ Theme</button>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="overview"><span class="step">1</span>Overview</button>
+    <button role="tab" data-tab="graph"><span class="step">2</span>Network graph</button>
+    <button role="tab" data-tab="influencers"><span class="step">3</span>Influencers</button>
+    <button role="tab" data-tab="communities"><span class="step">4</span>Communities</button>
+    <button role="tab" data-tab="recs"><span class="step">5</span>Friend recommendations</button>
+    <button role="tab" data-tab="how"><span class="step">6</span>How it works</button>
+  </nav>
+</header>
+
+<main>
+  <div id="nodata" class="card" hidden>
+    <h2>No results yet</h2>
+    <p class="ink2" style="margin-top:8px">This page shows the results that Spark computed. Create them first, on the master laptop:</p>
+    <p style="margin-top:8px"><code>.\scripts\run_all.ps1</code> then <code>.\scripts\submit.ps1 jobs\06_export_dashboard.py</code>, then reload this page.</p>
+  </div>
+
+  <!-- 1. OVERVIEW -->
+  <section class="page" id="page-overview" hidden>
+    <div>
+      <h2>The network at a glance</h2>
+      <p class="lead" id="ov-lead"></p>
+    </div>
+    <div class="tiles" id="ov-tiles"></div>
+    <div class="grid-3-2">
+      <div class="card">
+        <h3>How many friends do people have?</h3>
+        <div class="sub">Number of users per friend-count range. Hover a bar for details.</div>
+        <div class="chart" id="ov-degree"></div>
+        <p class="ink2" style="margin-top:10px;font-size:14px" id="ov-degree-note"></p>
+      </div>
+      <div class="card">
+        <h3>What this project computes</h3>
+        <div class="sub">Each analysis is a Spark job; click to explore its results.</div>
+        <div class="features" id="ov-features" style="grid-template-columns:1fr"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. GRAPH -->
+  <section class="page" id="page-graph" hidden>
+    <div class="graph-layout">
+      <div class="graph-box">
+        <canvas id="graph" aria-label="Network graph: every dot is a user, every line a friendship"></canvas>
+        <div class="graph-tools">
+          <div class="seg" role="group" aria-label="Color by">
+            <button data-color="community" aria-pressed="true">Color: community</button>
+            <button data-color="pagerank" aria-pressed="false">Color: PageRank</button>
+          </div>
+          <div class="search">
+            <input id="g-search" type="number" min="0" placeholder="Find user id…" aria-label="Find user id">
+            <button id="g-search-btn">Find</button>
+          </div>
+          <button class="icon-btn" id="g-reset">Reset view</button>
+          <label class="icon-btn" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="g-edges" checked> Friendships
+          </label>
+        </div>
+        <div class="graph-legend" id="g-legend"></div>
+        <div class="graph-hint">Scroll to zoom · drag to move · hover a dot · click to select</div>
+      </div>
+      <aside class="card panel" id="g-panel"></aside>
+    </div>
+  </section>
+
+  <!-- 3. INFLUENCERS -->
+  <section class="page" id="page-influencers" hidden>
+    <div>
+      <h2>Who are the influencers?</h2>
+      <p class="lead">Two ways to measure importance. <b>Friends (degree)</b> just counts connections.
+        <b>PageRank</b> (the algorithm behind Google) also asks <i>who</i> you are connected to:
+        a friend who is important themself counts more. Click any user to see them in the graph.</p>
+    </div>
+    <div class="tiles" id="inf-tiles"></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Top 15 by number of friends</h3>
+        <div class="sub">Degree centrality: share of all other users who are their friends.</div>
+        <div class="table-wrap" id="inf-degree"></div>
+      </div>
+      <div class="card">
+        <h3>Top 15 by PageRank</h3>
+        <div class="sub">1.0 = an average user. <span class="both">◆ both</span> = also in the other top 15.</div>
+        <div class="table-wrap" id="inf-pr"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Friends vs PageRank, every user</h3>
+      <div class="sub">Each dot is a user. Both axes are logarithmic (1, 10, 100, …). Dots high above the
+        crowd have few friends but important ones.</div>
+      <div class="chart" id="inf-scatter"></div>
+      <div class="legend" id="inf-legend"></div>
+    </div>
+  </section>
+
+  <!-- 4. COMMUNITIES -->
+  <section class="page" id="page-communities" hidden>
+    <div>
+      <h2>Which groups of friends exist?</h2>
+      <p class="lead"><b>Label Propagation</b>: every user starts with their own label and repeatedly takes the
+        label most common among their friends. Groups emerge by themselves. <b>Modularity</b> checks the result:
+        how much more connected the groups are inside than chance would give (above 0.3 = clear groups).</p>
+    </div>
+    <div class="tiles" id="com-tiles"></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>The 20 largest communities</h3>
+        <div class="sub">Members per community. The 8 largest have their own color here and in the graph.</div>
+        <div class="chart" id="com-bars"></div>
+      </div>
+      <div class="card">
+        <h3>All communities</h3>
+        <div class="sub">Density = share of possible friendships inside the group that exist. Click a row to see it in the graph.</div>
+        <div class="table-wrap" id="com-table"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. RECOMMENDATIONS -->
+  <section class="page" id="page-recs" hidden>
+    <div>
+      <h2>People you may know</h2>
+      <p class="lead">Friends of your friends whom you don't know yet, ranked by <b>mutual friends</b>.
+        Ties are broken by <b>Adamic-Adar</b>: a mutual friend with few friends counts more than a hub who knows everyone.</p>
+    </div>
+    <div class="card">
+      <div class="picker">
+        <label for="r-input"><b>User id</b></label>
+        <input id="r-input" type="number" min="0" placeholder="e.g. 460">
+        <button class="btn primary" id="r-go">Recommend</button>
+        <span class="muted" style="margin-left:6px">Try:</span>
+        <span id="r-chips" class="picker"></span>
+      </div>
+    </div>
+    <div class="grid-3-2">
+      <div class="card">
+        <h3 id="r-title">Suggestions</h3>
+        <div class="sub" id="r-sub"></div>
+        <div class="table-wrap" id="r-table"></div>
+        <div class="btn-row" style="margin-top:12px"><button class="btn" id="r-graph">Show on the graph</button></div>
+      </div>
+      <div class="card why">
+        <h3 id="w-title">Why this suggestion?</h3>
+        <div class="sub" id="w-sub">Click a suggestion to see the mutual friends that connect you.</div>
+        <div id="w-svg"></div>
+      </div>
+    </div>
+    <div class="tiles" id="r-tiles"></div>
+  </section>
+
+  <!-- 6. HOW IT WORKS -->
+  <section class="page" id="page-how" hidden>
+    <div>
+      <h2>How it works</h2>
+      <p class="lead">Every number on this page was computed by Spark jobs on a cluster of laptops. The data lives in
+        HDFS, stored twice on different laptops. This page only displays the results.</p>
+    </div>
+    <div class="card">
+      <h3>Pipeline</h3>
+      <div class="sub">Each step is one Spark job (<code>jobs/</code>), reading from and writing to HDFS.</div>
+      <div class="flow">
+        <div class="step-box"><b>Raw data</b>SNAP edge list in HDFS <code>/sna/raw</code></div><div class="arrow">→</div>
+        <div class="step-box"><b>01 Build graph</b>clean, both directions, GraphFrame</div><div class="arrow">→</div>
+        <div class="step-box"><b>02 Statistics</b>degrees, triangles, clustering, components</div><div class="arrow">→</div>
+        <div class="step-box"><b>03 Influencers</b>degree centrality, PageRank</div><div class="arrow">→</div>
+        <div class="step-box"><b>04 Communities</b>Label Propagation, modularity</div><div class="arrow">→</div>
+        <div class="step-box"><b>05 Recommend</b>mutual friends + Adamic-Adar</div><div class="arrow">→</div>
+        <div class="step-box"><b>06 Export</b>results + layout → this page</div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>The cluster</h3>
+        <div class="sub">Three laptops on one phone hotspot; they find each other automatically (registry).</div>
+        <div class="nodes3">
+          <div><b>Master laptop</b>Spark master + driver, 1 worker<br>HDFS NameNode + DataNode<br>registry</div>
+          <div><b>Friend laptop A</b>Spark worker<br>HDFS DataNode</div>
+          <div><b>Friend laptop B</b>Spark worker<br>HDFS DataNode</div>
+        </div>
+        <p class="ink2" style="margin-top:12px;font-size:14px">Fault tolerance (tested): a job still finishes when a
+          worker leaves mid-run, and every file stays readable when a laptop's storage leaves. HDFS then restores the 2 copies itself.</p>
+      </div>
+      <div class="card">
+        <h3>Run time of the whole pipeline</h3>
+        <div class="sub">Measured 22 Nov 2026 (README, section 6.5). Same results on every setup.</div>
+        <div class="chart" id="how-times"></div>
+        <p class="ink2" style="margin-top:8px;font-size:14px">More laptops = slower here: this graph is small, and a phone
+          hotspot is ~400× slower than the network inside one laptop. Distribution pays off for big data.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="tip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

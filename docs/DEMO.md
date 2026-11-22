@@ -14,7 +14,8 @@
 1. Everyone joins **your** phone hotspot (not the campus Wi-Fi). Start Docker Desktop on every laptop.
 2. Master: `.\scripts\cluster_up.ps1`. Friends: `.\scripts\worker_up.ps1`.
 3. Master: `.\scripts\cluster_status.ps1`: 3 workers ALIVE, 3 DataNodes Live.
-4. Open the browser tabs: http://localhost:8080 (Spark), http://localhost:9870 (HDFS → *Datanodes*).
+4. Open the browser tabs: http://localhost:8080 (Spark), http://localhost:9870 (HDFS → *Datanodes*),
+   and the dashboard `ui\index.html` (already exported; works offline, even if the cluster fails).
 
 ## Demo script (about 10 minutes)
 
@@ -23,7 +24,7 @@
 | 1 | The cluster | `cluster_status.ps1`, Spark UI :8080 | "3 laptops, found each other by themselves through the registry" |
 | 2 | The data in HDFS | HDFS UI :9870 → *Utilities → Browse* `/sna` | "Stored in HDFS, each block on 2 laptops" |
 | 3 | Run the analysis | `.\scripts\run_all.ps1` (or one job: `.\scripts\submit.ps1 jobs\03_influencers.py`) | Point at :4040 → *Executors*: tasks on all 3 laptops |
-| 4 | Results | the job output: stats, top influencers, communities, recommendations | Same numbers as SNAP's reference (README, section 6) |
+| 4 | Results | **Dashboard** `ui\index.html`: Overview → Network graph (zoom, click user 107) → Influencers → Communities (click 1205) → Recommendations (user 460, click the first suggestion) | Same numbers as SNAP's reference (README, section 6); "everything here was computed by Spark" |
 | 5 | Fault tolerance (Spark) | while job 02 runs, Bob: `docker compose -f docker-compose.worker.yml stop spark-worker` | "Job still finishes: Spark re-runs the lost tasks" |
 | 6 | Fault tolerance (HDFS) | Bob: `docker compose -f docker-compose.worker.yml --profile storage stop datanode`, then `docker compose exec namenode hdfs fsck /sna/output -files -blocks -locations` | "Every block still has a copy elsewhere; after ~2.5 min HDFS re-copies it" |
 | 7 | Lesson | README 6.5 | "On a hotspot the network is ~400× slower than inside one laptop: distribution pays off only for big data" |
