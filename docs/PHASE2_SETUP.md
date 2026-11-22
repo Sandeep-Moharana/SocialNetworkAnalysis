@@ -1,206 +1,171 @@
-# Phase 2 Setup: a friend's PC as a Spark worker
+# Phase 2 Setup: friends' PCs as Spark workers + HDFS DataNodes
 
-Goal: your laptop stays the **master** (HDFS, Spark master, driver, 1 worker), and
-each friend's PC adds one **Spark worker**. The analytics code does not change.
+Your laptop is the **master**. Each friend's PC adds **computing** (Spark worker) and
+**storage** (HDFS DataNode, every block kept on 2 PCs). The analytics code does not change.
 
 ```
-  YOUR LAPTOP (master)                         FRIEND's PC
-  ┌───────────────────────────────┐            ┌──────────────────┐
-  │ spark-master    namenode      │◄── Wi-Fi ─►│ worker-alice     │
-  │ spark-client    datanode      │            │ (2 cores, 2 GB)  │
-  │ spark-worker-1                │            └──────────────────┘
-  └───────────────────────────────┘
+  YOUR LAPTOP (master)                FRIEND A's PC          FRIEND B's PC
+  ┌─────────────────────────────┐     ┌────────────────┐     ┌────────────────┐
+  │ spark-master   namenode     │◄───►│ worker-alice   │◄───►│ worker-bob     │
+  │ spark-client   datanode     │     │ datanode-alice │     │ datanode-bob   │
+  │ spark-worker-1  registry    │     └────────────────┘     └────────────────┘
+  └─────────────────────────────┘           all on the same hotspot / Wi-Fi
 ```
 
-Do it with **one friend first**. Add the second friend only after the first one works.
-In the examples, the friend is called `alice`, your IP is `172.30.10.84`, and
-Alice's IP is `172.30.10.99`. Use your own values.
+**Nobody types IP addresses.** Phone hotspots give every laptop a new IP each time.
+So the master runs a small **registry** (port 8099). Each friend's script finds the master on
+the hotspot by itself (about 2 s), says "I'm alice at 10.67.29.112", and gets everyone's
+current IP. The firewall rule allows the whole local network, so it never needs updating.
+
+In the examples, the friends are `alice` and `bob`. Use your own names.
 
 ---
 
-## 0. Before you start (your laptop)
+## Part A: one-time setup
 
-- Both PCs must be on the **same Wi-Fi**, with VPNs off.
-- Some campus and café networks block devices from talking to each other. Step 2 checks this
-  in 2 minutes, before your friend installs anything big.
-- Commit and push the latest code, so your friend can download it:
-  ```powershell
-  git add . ; git commit -m "feat: phase 2 cluster config" ; git push
-  ```
-  If the GitHub repo is private, add your friend as a collaborator, or send them the repo as a zip.
-
-## 1. Swap IP addresses
-
-On **both** PCs, run `ipconfig` and find **"IPv4 Address"** under **"Wireless LAN adapter Wi-Fi"**.
-Send each other the number.
-
-IP addresses can change when you reconnect to Wi-Fi. Check them again each time you meet.
-If one changed, update `.env` and repeat steps 3 and 6.
-
-## 2. Your laptop: start the master
-
-Open PowerShell in the project folder.
+### A1. Master laptop (yours)
 
 ```powershell
 copy .env.master.example .env
-notepad .env
+notepad .env                 # FRIEND_A=alice   FRIEND_B=bob   (just the names)
 ```
-Set `FRIEND_A=alice` and `FRIEND_A_IP=<Alice's IP>`. Leave `FRIEND_B` as it is for now. Save the file.
-
-Open firewall ports for Alice. Use **PowerShell → "Run as administrator"**, then `cd` to the project folder:
+PowerShell **as administrator**, in the project folder:
 ```powershell
 .\scripts\open_firewall.ps1 -Role master
 ```
 
-Start the cluster in Phase 2 mode, in a normal PowerShell:
-```powershell
-.\scripts\cluster_up.ps1
-```
+### A2. Each friend's PC
 
-**Quick network test (on Alice's PC, nothing installed yet):**
-```powershell
-Test-NetConnection 172.30.10.84 -Port 7077      # your IP
-```
-- `TcpTestSucceeded : True`: the network works. Continue.
-- `False`: stop here and look at Troubleshooting. Installing Docker will not fix this.
+**Needs:** Windows 10/11, 8 GB RAM or more, about 10 GB free disk, admin rights.
 
-## 3. Friend's PC: one-time install (about 30 min, mostly downloads)
-
-**Needs:** Windows 10/11, at least 8 GB RAM, about 10 GB free disk, admin rights.
-
-1. PowerShell → **"Run as administrator"**:
-   ```powershell
-   wsl --install
-   winget install -e --id Docker.DockerDesktop
-   winget install -e --id Git.Git
-   ```
-   **Restart the PC.**
-2. Start **Docker Desktop** and accept the terms. Keep "Use WSL 2 based engine" on.
-   Wait until it says *Engine running*.
-3. Limit Docker's memory. Create the file `C:\Users\<name>\.wslconfig` with:
+1. PowerShell **as administrator**:
+   `wsl --install` · `winget install -e --id Docker.DockerDesktop` · `winget install -e --id Git.Git` → **restart**.
+2. Open **Docker Desktop**, accept, wait for *Engine running*.
+3. Create `C:\Users\<name>\.wslconfig` with these lines, then run `wsl --shutdown` and reopen Docker Desktop:
    ```ini
    [wsl2]
    memory=4GB
    processors=4
    ```
-   Then run `wsl --shutdown` in PowerShell and restart Docker Desktop.
-4. In a normal PowerShell, allow our scripts to run (one time):
+4. Normal PowerShell:
    ```powershell
    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+   cd $HOME
+   git clone https://github.com/<you>/SocialNetworkAnalysis.git
+   cd SocialNetworkAnalysis
+   copy .env.worker.example .env
+   notepad .env
+   ```
+   | Setting | Alice | Bob |
+   |---|---|---|
+   | `NODE_NAME` | `alice` | `bob` |
+   | `DATANODE_PORT` | `9876` | `9886` (**must differ**) |
+5. PowerShell **as administrator**, in the project folder:
+   ```powershell
+   .\scripts\open_firewall.ps1 -Role worker
+   ```
+6. Download the images **now, at home** (about 1.5 GB, 5–10 min), so the first start is quick:
+   ```powershell
+   docker build -t sna-spark:3.5.3 docker/spark
+   docker pull apache/hadoop:3.3.6
    ```
 
-## 4. Friend's PC: get the project and set it up
+## Part B: every session (3 commands)
 
-Normal PowerShell:
+1. **Everyone joins the same hotspot.** Docker Desktop must be running on every laptop.
+2. **Master:**
+   ```powershell
+   .\scripts\cluster_up.ps1
+   ```
+   It shows your IP, starts the registry, and **waits** (up to 3 min) until the friends join.
+3. **Each friend** (while the master waits):
+   ```powershell
+   .\scripts\worker_up.ps1
+   ```
+   It finds the master, registers, waits for the other friend, writes the IPs and starts.
+4. **Master, about 30 s later:**
+   ```powershell
+   .\scripts\cluster_status.ps1
+   ```
+   You want every PC listed under the registry, Spark workers (ALIVE) and HDFS DataNodes (Live):
+   ```
+   === Registry ===           === Spark workers ===      === HDFS DataNodes ===
+   master 10.67.29.84         spark-worker-1 ALIVE       datanode       Live
+   alice  10.67.29.112        worker-alice   ALIVE       datanode-alice Live
+   bob    10.67.29.66         worker-bob     ALIVE       datanode-bob   Live
+   ```
+5. Run the pipeline: `.\scripts\run_all.ps1`. Then `cluster_status.ps1` should show
+   *Under-replicated blocks: 0*, meaning every block is on 2 PCs.
+
+**Someone joined late, or a laptop reconnected and got a new IP?** Everyone who is already running
+runs their script again (`cluster_up.ps1` / `worker_up.ps1`). It refreshes the IPs, and HDFS data is kept.
+
+**Storage causing trouble?** A friend can join with computing only: `.\scripts\worker_up.ps1 -NoStorage`.
+
+## Updating a friend's PC (e.g. Alice from the old version)
+
 ```powershell
-cd $HOME
-git clone https://github.com/<you>/SocialNetworkAnalysis.git
-cd SocialNetworkAnalysis
-copy .env.worker.example .env
-notepad .env
+cd $HOME\SocialNetworkAnalysis
+git pull
+notepad .env                               # keep NODE_NAME=alice, add DATANODE_PORT=9876
+.\scripts\open_firewall.ps1 -Role worker   # as administrator: the new rule works on any hotspot
+docker pull apache/hadoop:3.3.6            # image for the new DataNode
 ```
-Set:
-```
-NODE_NAME=alice              # must match FRIEND_A on your laptop
-MASTER_IP=172.30.10.84       # YOUR laptop's IP
-```
-Leave `OTHER_FRIEND` as it is for now. Save the file.
+Then continue with Part B. Code in `src/` and `jobs/` never needs updating on friends' PCs:
+every job sends it to the executors.
 
-Open the firewall. Use **PowerShell → "Run as administrator"**, then `cd $HOME\SocialNetworkAnalysis`:
-```powershell
-.\scripts\open_firewall.ps1 -Role worker
-```
+## Experiments (for the report and the demo)
 
-## 5. Friend's PC: start the worker
-
-Normal PowerShell, in the project folder:
-```powershell
-.\scripts\worker_up.ps1
-```
-- It first checks that it can reach your master. If not, it stops with a hint.
-- The **first** run builds the Spark image: about 1 GB download, 5–10 minutes.
-- After that, starting takes seconds. The worker also restarts by itself after a reboot,
-  as long as Docker Desktop is running.
-
-## 6. Check that it is connected (your laptop)
-
-**Check 1: does the master see the worker?** Open http://localhost:8080. Under *Workers* you should see:
-
-| Worker | State |
-|---|---|
-| spark-worker-1 | ALIVE |
-| worker-alice | ALIVE |
-
-Or in PowerShell:
-```powershell
-(Invoke-RestMethod http://localhost:8080/json/).workers | Select-Object host, state, cores
-```
-
-**Check 2: does real work run there?** This is the real test. A worker can show ALIVE while
-jobs still fail, if the connections the other way are blocked.
-```powershell
-.\scripts\submit.ps1 jobs\00_smoke_test.py
-```
-Success looks like this:
-```
-[1] Tasks ran on executors: ['spark-worker-1', 'worker-alice']
-...
-SMOKE TEST PASSED
-```
-`worker-alice` in that list means tasks ran on Alice's PC, read HDFS from your laptop,
-and sent results back. **You now have a multi-PC cluster.**
-
-## 7. Adding the second friend (Bob)
-
-1. On your laptop's `.env`: set `FRIEND_B=bob` and `FRIEND_B_IP=<Bob's IP>`.
-2. On Alice's `.env`: set `OTHER_FRIEND=bob` and `OTHER_FRIEND_IP=<Bob's IP>`.
-3. On Bob's PC: steps 3–5, with `NODE_NAME=bob`, `OTHER_FRIEND=alice` and `OTHER_FRIEND_IP=<Alice's IP>`.
-4. Everyone re-runs `open_firewall.ps1` (as admin) and their up script (`cluster_up.ps1` or `worker_up.ps1`).
+| Experiment | How | What should happen |
+|---|---|---|
+| Scaling | `run_all.ps1` with 1, 2, 3 PCs | Compare the timing tables (1 laptop: 121 s) |
+| Worker leaves mid-job | During job 02, a friend runs `docker compose -f docker-compose.worker.yml stop spark-worker` | The job still finishes: Spark re-runs the lost tasks |
+| DataNode leaves | A friend runs `docker compose -f docker-compose.worker.yml --profile storage stop datanode` | Data still readable. After about 2.5 min it shows Dead, and HDFS re-copies its blocks |
+| Slow-task fix | `.\scripts\run_all.ps1 -Conf spark.speculation=true` | Spark starts backup copies of slow tasks |
 
 ## Daily use
 
 | Who | Start | Stop |
 |---|---|---|
-| You | `.\scripts\cluster_up.ps1` | `docker compose stop` |
-| Friend | `.\scripts\worker_up.ps1` | `docker compose -f docker-compose.worker.yml down` |
+| Master | `.\scripts\cluster_up.ps1` (`-NoWait`: don't wait for friends) | `docker compose -f docker-compose.yml -f docker-compose.cluster.yml stop` |
+| Friend | `.\scripts\worker_up.ps1` (`-NoStorage`: computing only) | `docker compose -f docker-compose.worker.yml --profile storage stop` |
 
-- **Back to one laptop** (Phase 1, 2 local workers): `docker compose up -d`. HDFS data is kept.
-- **Run one job at a time.** The ports are fixed, so two jobs at once would clash.
-- **When the project is done:** everyone runs `.\scripts\open_firewall.ps1 -Remove` as admin.
+- **Back to one laptop (Phase 1):** `docker compose up -d --remove-orphans`. HDFS data is kept.
+- **Run one job at a time** (fixed ports).
+- **Project finished:** everyone runs `.\scripts\open_firewall.ps1 -Remove` as administrator.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| `Test-NetConnection ... 7077` is `False` | (1) Is `cluster_up.ps1` running on your laptop? (2) Is it the right IP? Check `ipconfig` again. (3) Did you run `open_firewall.ps1 -Role master` after entering the friend's IP? (4) The Wi-Fi may block devices from reaching each other (common on campus): use a phone hotspot or a home router |
-| `worker_up.ps1` says it cannot reach the master | Same as above |
-| Worker never appears at :8080 | On the friend's PC: `docker compose -f docker-compose.worker.yml logs`. Usually a wrong `MASTER_IP` |
-| Worker shows ALIVE, but the smoke test hangs at `Initial job has not accepted any resources` or executors keep exiting | Your laptop can't reach the friend's ports 7078/7079: run `open_firewall.ps1 -Role worker` on the friend's PC. Check that the friend's IP in your `.env` is current, then re-run `cluster_up.ps1` |
-| `Cannot assign requested address` in the worker log | A PC's own name is in its own `extra_hosts`. Check that `OTHER_FRIEND` in `.env` is not this PC's name |
-| `required variable ... is missing` | `.env` is missing or a value is empty: compare it with the `.example` file |
-| Errors fetching shuffle data (job 02) with two friends | The two friends can't reach each other: check `OTHER_FRIEND_IP` and both firewalls |
-| Works for hours, then breaks | Someone's IP changed (Wi-Fi reconnect) or a laptop went to sleep: see step 1 |
-| Rare: your Wi-Fi IP starts with the same numbers as a Docker network | On the friend's PC, `docker network inspect sna-worker_default` shows the subnet. If it contains `MASTER_IP`, the worker's Docker network needs a fixed, different subnet in `docker-compose.worker.yml` |
+| `worker_up.ps1`: *Master laptop not found* | Is `cluster_up.ps1` running on the master? Same hotspot? Did the master run `open_firewall.ps1 -Role master` (once, as admin)? Some phones isolate devices from each other: try another phone. Or give the IP: `worker_up.ps1 -MasterIP <IP shown by cluster_up>` |
+| `cluster_up.ps1` keeps waiting for a friend | That friend hasn't run `worker_up.ps1`, or their `NODE_NAME` doesn't match `FRIEND_A`/`FRIEND_B` (their script prints a warning) |
+| Worker not ALIVE in `cluster_status.ps1` | Friend: `docker compose -f docker-compose.worker.yml logs spark-worker`. Usually their firewall: re-run `open_firewall.ps1 -Role worker` as admin |
+| DataNode missing | Friend: `docker compose -f docker-compose.worker.yml --profile storage logs datanode`. *Retrying connect to server: namenode* = can't reach the master's port 8020 (master firewall) |
+| Only one friend's DataNode shows; they replace each other | Both use the same `DATANODE_PORT`. Use 9876 and 9886 |
+| Jobs suddenly take minutes, retries / `FetchFailed` | A laptop's IP changed or someone joined late: everyone re-runs their up script |
+| `required variable ... is missing` | `.env` incomplete: compare with the `.example` file |
 
 ## How it works (for the curious)
 
-Docker on Windows hides each container behind its PC, so a container IP like `172.18.0.5`
-means nothing to another PC. So:
+Docker on Windows hides containers behind NAT, so a container IP like `172.18.0.5` means nothing to
+another PC. So:
 
-- **Everyone introduces themselves by name** (`spark-master`, `spark-client`, `worker-alice`, …).
-  Inside its own container, a name means "me". On other PCs, `extra_hosts` (filled from `.env`)
-  maps it to that PC's Wi-Fi IP.
-- **Every port is fixed and published with the same number on both sides**, because the port
-  is part of the address each process announces:
+- **Names, not IPs.** Every service introduces itself by name (`spark-master`, `worker-alice`,
+  `datanode-alice`, …). On its own PC the name means "me"; on other PCs, `extra_hosts` maps it to that
+  PC's current IP. The scripts write those IPs into `.env` from the registry.
+- **Fixed ports, the same number on both sides**, because the port is part of each address.
+- **One HDFS data port per PC.** The NameNode sees every friend's DataNode arriving from the same NAT
+  address (`172.18.0.1`) and tells them apart by address + data port.
 
-| Port | Listens on | Who connects |
+| Port | Where | Who connects |
 |---|---|---|
-| 7077 | master (your laptop) | workers register |
-| 7078 | each worker | the master starts executors |
-| 7079 | each executor | other executors and the driver (shuffle data) |
-| 7080, 7081 | driver (your laptop) | executors: tasks, our code, GraphFrames |
-| 8020, 9866 | HDFS (your laptop) | executors read and write data |
+| 8099 | registry (master) | friends' scripts: "who is where?" |
+| 7077 | Spark master | workers register |
+| 7078 | each worker | master starts executors |
+| 7079 | each executor | other executors + driver (shuffle data) |
+| 7080, 7081 | driver (master) | executors: tasks, our code, GraphFrames |
+| 8020 | NameNode (master) | DataNodes (heartbeats), clients |
+| 9866 / 9876 / 9886 | DataNode: master / Alice / Bob | clients and other DataNodes (block data) |
+| 9867 | DataNodes (IPC) | other DataNodes (block recovery) |
 | 8080, 8081, 9870, 4040 | web UIs | browsers |
-
-The settings live in `docker-compose.yml`, `docker-compose.cluster.yml`,
-`docker-compose.worker.yml`, `docker/spark-defaults.conf` and `.env`.

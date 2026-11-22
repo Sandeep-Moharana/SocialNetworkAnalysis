@@ -3,8 +3,9 @@
 #   .\scripts\run_all.ps1 -Dataset <name>
 # The timing table is our single-machine baseline: in Phase 2 we run the same
 # script on the multi-PC cluster and compare.
+#   .\scripts\run_all.ps1 -Conf spark.speculation=true   # same Spark settings for every job
 # Note: 05_recommend uses its default user (0); pass other users by running it alone.
-param([string]$Dataset = "facebook")
+param([string]$Dataset = "facebook", [string[]]$Conf = @())
 $submit = Join-Path $PSScriptRoot "submit.ps1"
 
 $jobs = @(
@@ -19,7 +20,7 @@ $results = @()
 foreach ($job in $jobs) {
     Write-Host "`n>>> $job --dataset $Dataset" -ForegroundColor Cyan
     $start = Get-Date
-    & $submit $job --dataset $Dataset
+    & $submit $job -Conf $Conf --dataset $Dataset
     $code = $LASTEXITCODE
     $results += [pscustomobject]@{
         Job     = $job

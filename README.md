@@ -1,197 +1,310 @@
-# Social Network Analysis with HDFS, Spark and GraphFrames
+# Social Network Analysis on a Distributed Cluster using HDFS, Spark and GraphFrames
 
-Distributed graph analytics on real social-network data:
-**influencer detection, community detection, network statistics, and friend recommendation**,
-stored in HDFS, processed with Apache Spark, and analyzed with GraphFrames.
+**Lab Report**
 
-## Status
+| | |
+|---|---|
+| Course | *<course code and name>* |
+| Team | *<name (roll no.)>*, *<name (roll no.)>*, *<name (roll no.)>* |
+| Instructor | *<instructor name>* |
+| Date | *<submission date>* |
+| Repository | *<GitHub URL>* |
 
-| Phase | Description | Status |
-|---|---|---|
-| 0 | Plan, architecture, repo | ✅ |
-| 1 | MVP on one machine (Dockerized HDFS + Spark cluster, ego-Facebook dataset) | ✅ `v0.1` |
-| 2 | Real cluster on multiple laptops | 🚧 in progress |
-| 3 | Bigger datasets, more algorithms, evaluation, visualization | ⏳ |
+---
 
-Phase 1 progress:
-- [x] 1.1 Docker cluster (HDFS + Spark standalone)
-- [x] 1.2 Smoke test (GraphFrames PageRank + HDFS round trip)
-- [x] 1.3 Dataset download + load into HDFS
-- [x] 1.4 Core pipeline (config, session, loader): `jobs/01_build_graph.py`
-- [x] 1.5 Network statistics: `jobs/02_network_stats.py`
-- [x] 1.6 Influencer detection: `jobs/03_influencers.py`
-- [x] 1.7 Community detection: `jobs/04_communities.py`
-- [x] 1.8 Friend recommendation: `jobs/05_recommend.py`
-- [x] 1.9 Tests + results: 35 unit tests (`scripts\test.ps1`), full pipeline (`scripts\run_all.ps1`)
+## Abstract
 
-Phase 2 progress ([guide](docs/PHASE2_SETUP.md)):
-- [x] 2.1 Cluster config: fixed names + ports, master/worker compose files, setup scripts (tested with a simulated friend PC)
-- [ ] 2.2 First friend's PC joins as a Spark worker
-- [ ] 2.3 Second friend, timing vs Phase 1, fault-tolerance demo
-- [ ] 2.4 HDFS across PCs (DataNode per friend, replication 2)
-- [ ] 2.5 Results, tag `v0.2`
+We built a distributed system that analyzes a real social network (SNAP ego-Facebook: 4,039 users,
+88,234 friendships). The data is stored in **HDFS**, processed with **Apache Spark** and analyzed with
+**GraphFrames**. The system computes network statistics, detects influencers (PageRank), finds
+communities (Label Propagation) and recommends friends (mutual friends + Adamic-Adar). We first ran it
+as a containerized cluster on one laptop, then on several students' laptops connected over Wi-Fi.
+All results match published reference values and hand-calculated tests (35 unit tests). The whole
+pipeline takes 121 s on one laptop. On two laptops it takes 362 s, because the Wi-Fi link is about 400×
+slower than the network inside one machine. Distributed HDFS with 2 copies per block survived
+the loss of a storage node without losing data and restored its 2 copies within 26 s.
 
-## Architecture (Phase 1)
+## 1. Introduction
+
+Social networks are graphs: people are **vertices** and friendships are **edges**. Large graphs
+do not fit on one machine, so they need distributed storage and processing.
+
+**Objectives**
+1. Store a social graph in a distributed file system (HDFS).
+2. Implement four analyses with Spark and GraphFrames: **network statistics, influencer detection,
+   community detection, friend recommendation**.
+3. Run the same code on a single machine and on a multi-PC cluster, with no code changes.
+4. Validate correctness and measure performance and fault tolerance.
+
+## 2. Background
+
+| Tool | Role in this project |
+|---|---|
+| **HDFS** (Hadoop 3.3.6) | Distributed storage. The *NameNode* keeps metadata and *DataNodes* store data blocks, replicated on several machines |
+| **Apache Spark** (3.5.3, PySpark) | Distributed processing. A *driver* splits work into *tasks* that run on *executors* on *worker* machines |
+| **GraphFrames** (0.8.4) | Graph algorithms on Spark DataFrames: PageRank, Label Propagation, connected components, triangle count |
+| **Docker Compose** | Runs every node as a container, so each PC has the same setup |
+
+| Algorithm | Idea |
+|---|---|
+| Degree centrality | number of friends ÷ (n − 1) |
+| PageRank | a user is important if important users are connected to them |
+| Label Propagation (LPA) | each user repeatedly adopts the most common label among friends; groups emerge |
+| Modularity Q | how much denser communities are inside than chance (> 0.3 = clear structure) |
+| Clustering coefficient | fraction of a user's friend pairs who are also friends |
+| Adamic-Adar | mutual friends weighted by 1 / log(their degree): a shared friend with few friends counts more |
+
+## 3. System Design
+
+### 3.1 Architecture
+
+**Phase 1: one laptop.** Six containers form a real (small) cluster:
 
 ```
- laptop ──► spark-client (driver) ──► spark-master ──► spark-worker-1, spark-worker-2
-                    │                                        │
-                    └──────────────► HDFS: namenode ◄── datanode (blocks)
-```
-Details: [docs/PLAN.md](docs/PLAN.md)
-
-## Quickstart
-
-Prerequisites: Docker Desktop (WSL2), Git. Full guide: [docs/SETUP.md](docs/SETUP.md).
-
-```powershell
-docker compose up -d --build                  # build our Spark image, start HDFS + Spark
-.\scripts\submit.ps1 jobs\00_smoke_test.py    # verify the stack
-.\scripts\download_dataset.ps1                # get ego-Facebook
-.\scripts\load_to_hdfs.ps1                    # put it in HDFS
-.\scripts\submit.ps1 jobs\01_build_graph.py   # build the graph: 4,039 vertices, 88,234 connections
-.\scripts\submit.ps1 jobs\02_network_stats.py # degrees, components, triangles, clustering
-.\scripts\submit.ps1 jobs\03_influencers.py   # top-10 by degree centrality and PageRank
-.\scripts\submit.ps1 jobs\04_communities.py   # Label Propagation communities + modularity
-.\scripts\submit.ps1 jobs\05_recommend.py --users 460 2627   # "people you may know"
-
-.\scripts\test.ps1                            # unit tests (tiny graphs, known answers)
-.\scripts\run_all.ps1                         # jobs 01-05 in order, with a timing table
+ spark-client (driver) ──► spark-master ──► spark-worker-1, spark-worker-2
+        │                                         │
+        └────────────────► HDFS: namenode ◄── datanode
 ```
 
-## Testing
+**Phase 2: several laptops on the same Wi-Fi.**
 
-| Check | Command | What it proves |
+```
+  Laptop 1 (master)                 Laptop 2                Laptop 3
+  ┌───────────────────────────┐     ┌────────────────┐      ┌────────────────┐
+  │ spark-master   namenode   │◄───►│ worker-alice   │◄────►│ worker-bob     │
+  │ spark-client   datanode   │     │ datanode-alice │      │ datanode-bob   │
+  │ spark-worker-1            │     └────────────────┘      └────────────────┘
+  └───────────────────────────┘
+```
+
+### 3.2 Data flow
+
+Every analysis is a separate Spark job with the same four steps:
+
+```
+HDFS raw edge list ─► load + clean ─► GraphFrame (vertices, edges) ─► algorithm ─► results as Parquet in HDFS
+```
+Cleaning removes self-loops and duplicates. Because friendship is mutual, each edge is stored in
+both directions (88,234 friendships → 176,468 directed edges).
+
+### 3.3 Key design decisions
+
+| Decision | Reason |
+|---|---|
+| Docker instead of a native install | Hadoop on Windows is fragile; containers give each PC the same setup |
+| Settings outside the code (`config/sna.ini`, `docker/spark-defaults.conf`, `.env`) | Moving from 1 to N machines changed **only configuration**, never analytics code |
+| Analysis functions do no I/O (they take a graph and return tables) | They can be unit-tested on tiny graphs without a cluster |
+| Our Python package is zipped and shipped with each job | Executors on other PCs need no copy of the code |
+| **Names + fixed ports** for every service | Docker on Windows hides containers behind NAT; each service announces a name (e.g. `worker-alice`), which every PC maps to the right Wi-Fi IP |
+| One HDFS data port per PC | The NameNode sees all remote DataNodes from the same NAT address and tells them apart by port |
+| Automatic IP discovery (a small registry on the master) | Phone hotspots give new IPs every session. Each laptop detects its own IP, finds the master by scanning the hotspot (~2 s) and learns everyone's current IP. The firewall allows the local subnet, so no manual changes are needed |
+| HDFS replication 2 + persistent volumes | Data survives a laptop leaving and container restarts |
+
+## 4. Implementation
+
+**Dataset.** SNAP ego-Facebook [1]: friend lists of 10 "ego" users and their friends, anonymized.
+
+| Job | Feature | Method | Output (HDFS) |
+|---|---|---|---|
+| `01_build_graph.py` | Graph building | parse, clean, symmetrize, cache as Parquet | `processed/` |
+| `02_network_stats.py` | Network statistics | degrees, connected components, triangle count, clustering | `stats/` |
+| `03_influencers.py` | Influencer detection | degree centrality, PageRank (until converged, tol 1e-4) | `influencers/` |
+| `04_communities.py` | Community detection | Label Propagation (10 rounds), modularity | `communities/` |
+| `05_recommend.py` | Friend recommendation | friends-of-friends ranked by mutual friends, ties broken by Adamic-Adar | `recommendations/` |
+
+Code layout: reusable library in `src/sna/` (config, loaders, `features/`), entry points in
+`jobs/`, tests in `tests/`, cluster files in `docker/` and `docker-compose*.yml`.
+
+## 5. Experimental Setup
+
+| | Phase 1 | Phase 2 |
 |---|---|---|
-| Unit tests (35) | `.\scripts\test.ps1` | Every analysis function gives the hand-calculated answer on tiny graphs. Runs in Spark local mode: no workers or HDFS needed, about 40 s |
-| Smoke test | `.\scripts\submit.ps1 jobs\00_smoke_test.py` | The cluster works: both workers, GraphFrames, HDFS |
-| Full pipeline | `.\scripts\run_all.ps1` | All jobs run end to end on real data |
+| Machines | 1 laptop (Windows 11, Docker Desktop) | 2 laptops on a phone hotspot (3rd in progress) |
+| Spark | 2 workers × 2 cores × 2 GB | 1 worker per laptop × 2 cores × 2 GB |
+| HDFS | 1 DataNode | 1 DataNode per laptop, replication 2 (tested with simulated nodes) |
+| Measurement | `scripts/run_all.ps1` (all 5 jobs, wall-clock time per job) | same |
 
-Each test file in [tests/](tests/) draws its tiny graph in the docstring and explains
-the expected numbers. Recommendations are also compared with an independent
-plain-Python brute force on random graphs.
+**Validation.** Results were compared against (a) SNAP's published statistics, (b) hand-calculated
+answers on tiny graphs (35 unit tests), and (c) an independent plain-Python brute force for recommendations.
 
-## Results so far (ego-Facebook)
+## 6. Results
 
-| Statistic | Value | SNAP reference |
+### 6.1 Network statistics
+
+| Statistic | Our result | SNAP reference [1] |
 |---|---|---|
-| Vertices / connections | 4,039 / 88,234 | 4,039 / 88,234 ✅ |
-| Density | 0.0108 | |
-| Degree median / avg / max | 25 / 43.69 / 1,045 | |
-| Connected components | 1 (100% of vertices) | largest WCC = 4,039 ✅ |
+| Users / friendships | 4,039 / 88,234 | 4,039 / 88,234 ✅ |
+| Connected components | 1 | largest = 4,039 ✅ |
 | Triangles | 1,612,010 | 1,612,010 ✅ |
-| Avg clustering coefficient | 0.6055 | 0.6055 ✅ |
-| Transitivity | 0.5192 | |
+| Avg. clustering coefficient | 0.6055 | 0.6055 ✅ |
+| Density / transitivity | 0.0108 / 0.5192 | |
+| Degree median / mean / max | 25 / 43.7 / 1,045 | |
 
-Most users have 16–63 friends, while a few hubs have hundreds (user 107 has 1,045):
-a heavy-tailed degree distribution, typical of social networks.
+The degree distribution is **heavy-tailed**: most users have 16–63 friends, and a few hubs have hundreds.
 
-### Influencers
+### 6.2 Influencers
 
-| Rank | By degree (friends) | By PageRank (score, 1.0 = average user) |
+| Rank | By degree (friends) | By PageRank (1.0 = average) |
 |---|---|---|
 | 1 | 107 (1,045) | 3437 (30.6) |
 | 2 | 1684 (792) | 107 (27.8) |
 | 3 | 1912 (755) | 1684 (25.5) |
 | 4 | 3437 (547) | 0 (25.1) |
 | 5 | 0 (347) | 1912 (15.4) |
-| 6–10 | 2543, 2347, 1888, 1800, 1663 | 348, 686, 3980, 414, 483 |
 
-- The two rankings agree on the top 5, but only 5 of the top 10 overlap (correlation over all users: 0.68).
-- **PageRank finds the "ego" users.** This dataset was collected from the friend lists of 10 users
-  (0, 107, 348, 414, 686, 698, 1684, 1912, 3437, 3980), and 9 of them are in PageRank's top 10.
-  Each one is the hub that connects their own circle of friends to everyone else.
-- User **3980 has only 59 friends but ranks 8th** by PageRank: few connections, but to the right people.
-  Users 2543, 2347, … have more friends, but inside one dense circle, so they rank lower.
+- **PageRank found the dataset's ego users:** 9 of its top 10 are among the 10 users the data was
+  collected from. Each one connects their friend circle to the rest of the network.
+- Degree and PageRank overlap in only 5 of the top 10 (correlation 0.68). User 3980 has only 59
+  friends but ranks 8th by PageRank: few links, but to important users.
 
-### Communities (Label Propagation, 10 rounds)
+### 6.3 Communities
 
-| Metric | Value |
-|---|---|
-| Communities | 70 (median size 15, largest 476 = 11.8% of users) |
-| Connections inside a community | 92.2% |
-| Modularity Q | **0.808** (> 0.3 = clear structure; 5 rounds: 0.789, 20 rounds: 0.813) |
-
-| Largest communities | Size | Density inside | Leader (friends) |
+| Communities | Largest | Edges inside communities | Modularity Q |
 |---|---|---|---|
-| 1205 | 476 | 0.15 | 107 (1,045) |
-| 3277 | 450 | 0.08 | 1684 (792) |
-| 559 | 327 | 0.10 | 483 (231) |
-| 2344 | 295 | 0.23 | 1912 (755) |
-| 2353 | 237 | **0.59** | 2543 (294) |
-| 200 | 228 | 0.08 | 0 (347) |
+| 70 | 476 users (11.8%) | 92.2% | **0.808** |
 
-- **The ego users lead communities:** 6 of the 10 largest communities are led by one of the
-  ego users that PageRank found in step 1.6 (107, 1684, 1912, 0, 686, 3437).
-- **This explains step 1.6:** user 2543 has many friends but low PageRank. Their community
-  is extremely dense (59% of all possible pairs are friends): a closed circle where everyone
-  knows everyone, with few links to the outside.
+Q = 0.808 indicates very strong community structure. 6 of the 10 largest communities are led by an
+ego user from 6.2. User 2543 has many friends but low PageRank: their community is 59% dense, a closed
+circle with few links outside.
 
-### Friend recommendations (mutual friends, Adamic-Adar as tie-breaker)
+### 6.4 Friend recommendations
 
 ```
---- User 460 (66 friends) ---
-  rank  suggest  mutual  adamic-adar  same comm.  because you both know
-     1      483      41        9.968  yes         348, 353, 366, 370, 373, ...
-     2      561      41        9.851  yes         348, 353, 360, 370, 373, ...
-     3      513      39        9.183  yes         348, 353, 360, 366, 373, ...
+User 460 (66 friends)
+ rank  suggest  mutual  adamic-adar  same community
+    1      483      41        9.968  yes
+    2      561      41        9.851  yes
+    3      513      39        9.183  yes
 ```
+- Identical to the brute-force check for all tested users.
+- **85% of suggestions fall in the user's own community** (50 random users), so features 6.3 and 6.4
+  agree without using each other's results.
 
-- Checked against a plain-Python brute force for 8 users: identical candidates, scores and order.
-- **85% of suggestions fall in the user's own community** (50 random non-ego users, top 10 each).
-  The two features agree without using each other's results.
-- Ego users (0, 107, …) are the exception: they already know their whole circle, so every
-  suggestion comes from another circle (0% same community). Correct behavior, not a bug.
-- Ties are common (user 460: ranks 1 and 2 both have 41 mutual friends). Adamic-Adar breaks them by
-  counting mutual friends who are *not* hubs as stronger evidence.
+### 6.5 Performance: one laptop vs two laptops
 
-### Performance baseline (Phase 1: 1 laptop, 2 workers × 2 cores × 2 GB)
-
-| Job | Seconds |
-|---|---|
-| 01 build graph | 12 |
-| 02 network stats | 39 |
-| 03 influencers | 26 |
-| 04 communities | 29 |
-| 05 recommend | 15 |
-| **Total** | **121** |
-
-Every job is under the 2-minute target from [docs/PLAN.md](docs/PLAN.md). About 10 s of each is
-Spark start-up. Phase 2 will run `scripts\run_all.ps1` on the multi-PC cluster and compare.
-
-## Configuration
-
-| File | Holds | Change it when |
+| Job | 1 laptop | 2 laptops (hotspot) |
 |---|---|---|
-| [config/sna.ini](config/sna.ini) | HDFS folder layout, dataset formats | adding a dataset |
-| [docker/spark-defaults.conf](docker/spark-defaults.conf) | Spark master URL, HDFS NameNode, memory | moving to another cluster |
-| [docker/hadoop.env](docker/hadoop.env) | HDFS settings (replication, …) | moving to another cluster |
-| `.env` (from [.env.master.example](.env.master.example) / [.env.worker.example](.env.worker.example)) | Phase 2: names and Wi-Fi IPs of the PCs | an IP changes |
+| 01 build graph | 12 s | 10 s |
+| 02 network stats | 39 s | 92 s |
+| 03 influencers | 26 s | 62 s |
+| 04 communities | 29 s | 95 s |
+| 05 recommend | 15 s | 84 s |
+| **Total** | **121 s** | **362 s** |
 
-The analytics code (`src/sna`, `jobs/`) contains no hosts or paths, so it runs unchanged on any cluster.
+The results were identical on both setups. To explain the slowdown, we measured:
 
-## Tech stack
+| | Inside one laptop | Between laptops (hotspot) |
+|---|---|---|
+| Transfer 20 MB | 0.03 s | 27 s (~400× slower) |
+| Round-trip latency | < 1 ms | ~10 ms |
+| Same CPU work | 0.06 s | 0.12 s (second laptop's CPU) |
 
-Hadoop HDFS 3.3.6 · Apache Spark 3.5.3 (PySpark) · GraphFrames 0.8.4 · Docker Compose
+### 6.6 Distributed HDFS and fault tolerance
 
-## Repository layout
+Tested with two simulated remote DataNodes that connected through the same NAT path as real laptops:
+
+| Test | Result |
+|---|---|
+| Replication | all 46 result blocks stored as 2 copies, spread over 3 DataNodes |
+| One DataNode stopped | all 61 files still readable immediately (from the second copy) |
+| Self-healing | node declared dead after ~2.3 min; 2 copies restored **26 s** later |
+| Container restart | data kept (persistent volumes) |
+
+## 7. Discussion
+
+**Correctness.** Every analysis matches an external reference or an independent calculation, and the
+results are identical on 1 and 2 machines.
+
+**Why the cluster was slower.** Graph algorithms exchange data between machines (a *shuffle*) at
+almost every step. Over a phone hotspot this costs far more than the computation it saves, and one
+slow task delays its whole stage. With a 1 MB dataset, adding machines only adds network cost.
+A cluster pays off when the data is large and the network is fast (wired LAN or home router).
+
+**Challenges and solutions**
+
+| Problem | Solution |
+|---|---|
+| GraphFrames needs numpy, which is missing from the Spark image | Custom Docker image with pinned numpy 1.26.4 |
+| PageRank ranking flipped between runs on a 2-node cycle | Run until convergence (tolerance) instead of a fixed number of iterations |
+| Equal recommendation scores ranked differently between runs | Floating-point sums depend on order; scores rounded to 9 decimals |
+| Containers on different PCs could not reach each other (NAT) | Services announce names; fixed ports published on every PC |
+| Two remote DataNodes kept replacing each other in HDFS | One data port per PC (the NameNode identifies nodes by address + port) |
+| One PC with outdated settings slowed every job | IPs are now discovered automatically at every start (registry) |
+| Hotspot IPs (and even the subnet) change every session | Registry + subnet scan + firewall rule for the local subnet |
+
+**Limitations.** Small dataset; LPA results depend on the number of rounds; no data locality between
+Spark and HDFS containers; the 3-laptop run and real-laptop HDFS test are still in progress.
+
+## 8. Testing
+
+| Level | What | Result |
+|---|---|---|
+| Unit tests | 35 tests on tiny hand-drawn graphs (stats, PageRank, modularity, recommendations vs. brute force) | all pass, ~40 s |
+| Smoke test | cluster, GraphFrames and HDFS read/write | pass |
+| End-to-end | all 5 jobs on real data, 1 and 2 laptops | pass, identical results |
+| Fault tolerance | stop a DataNode; check reads and re-replication | pass (simulated) |
+
+## 9. Conclusion and Future Work
+
+We built a working distributed social-network analysis system on HDFS, Spark and GraphFrames. It
+gives correct results, runs unchanged from one laptop to several, and tolerates the loss of a storage
+node. The main lesson: **distribution only helps when the computation per byte sent is large**. On small
+data and slow Wi-Fi, the network dominates.
+
+Future work: the 3-laptop run with fault-tolerance demos; a faster network; larger datasets (Epinions,
+LiveJournal); data locality between Spark and HDFS; Louvain communities; recommendation evaluation
+(precision@K); visualization.
+
+## References
+
+1. J. McAuley and J. Leskovec. *Learning to Discover Social Circles in Ego Networks.* NIPS 2012.
+   Dataset: https://snap.stanford.edu/data/ego-Facebook.html
+2. Apache Hadoop HDFS documentation: https://hadoop.apache.org/docs/r3.3.6/
+3. Apache Spark documentation: https://spark.apache.org/docs/3.5.3/
+4. GraphFrames user guide: https://graphframes.github.io/graphframes/docs/_site/user-guide.html
+5. L. Page, S. Brin, R. Motwani, T. Winograd. *The PageRank Citation Ranking.* Stanford, 1999.
+6. U. N. Raghavan, R. Albert, S. Kumara. *Near linear time algorithm to detect community structures
+   in large-scale networks.* Physical Review E, 2007.
+7. L. Adamic and E. Adar. *Friends and neighbors on the Web.* Social Networks, 2003.
+
+---
+
+## Appendix A: How to Run
+
+Prerequisites: Windows 10/11, Docker Desktop (WSL2), Git. Full guides: [docs/SETUP.md](docs/SETUP.md)
+(one laptop), [docs/PHASE2_SETUP.md](docs/PHASE2_SETUP.md) (several laptops), [docs/DEMO.md](docs/DEMO.md)
+(demo checklist). Design: [docs/PLAN.md](docs/PLAN.md).
+
+Several laptops on one hotspot (after the one-time setup in PHASE2_SETUP.md):
+```powershell
+.\scripts\cluster_up.ps1        # master laptop: finds the friends, starts the cluster
+.\scripts\worker_up.ps1         # each friend's laptop: finds the master, joins
+.\scripts\cluster_status.ps1    # master: who is connected
+```
+
+One laptop:
+
+```powershell
+docker compose up -d --build                  # start HDFS + Spark
+.\scripts\submit.ps1 jobs\00_smoke_test.py    # check the cluster
+.\scripts\download_dataset.ps1                # download ego-Facebook
+.\scripts\load_to_hdfs.ps1                    # copy it into HDFS
+.\scripts\run_all.ps1                         # run jobs 01-05 with a timing table
+.\scripts\test.ps1                            # run the 35 unit tests
+.\scripts\submit.ps1 jobs\05_recommend.py --users 460   # recommendations for one user
+```
+
+## Appendix B: Repository Layout
 
 ```
-docker-compose.yml   the cluster (Phase 1; also the master laptop in Phase 2)
-docker-compose.cluster.yml   Phase 2 add-on for the master: friends' names -> IPs
-docker-compose.worker.yml    Phase 2: a friend's PC (one Spark worker)
-docker/              Hadoop + Spark config, our Spark image
-config/sna.ini       app settings: HDFS paths, datasets
-scripts/             download, load to HDFS, submit jobs
-jobs/                Spark jobs (entry points): load -> build graph -> analyze -> write
-src/sna/             reusable library: config, session, loaders, storage, cli
-src/sna/features/    analysis: stats, influencers, communities, recommend
-tests/               unit tests on tiny graphs (stdlib unittest, no extra packages)
-docs/                plan and setup guide
-data/                local downloads (not committed)
+docker-compose.yml          cluster (one laptop; also the master in Phase 2)
+docker-compose.cluster.yml  Phase 2 add-on for the master laptop
+docker-compose.worker.yml   Phase 2: a friend's laptop (Spark worker + DataNode)
+docker/                     Spark image, Spark and HDFS settings, HDFS start scripts
+config/sna.ini              HDFS paths and dataset formats
+src/sna/                    library: config, loading, features/ (stats, influencers, communities, recommend)
+jobs/                       Spark jobs 00-05
+tests/                      unit tests
+scripts/                    setup, run, status and firewall scripts
+docs/                       plan and setup guides
 ```
-
-## Dataset
-
-[SNAP ego-Facebook](https://snap.stanford.edu/data/ego-Facebook.html): 4,039 users, 88,234 friendships.
-J. McAuley and J. Leskovec, *Learning to Discover Social Circles in Ego Networks*, NIPS 2012.

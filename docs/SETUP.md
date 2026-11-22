@@ -112,7 +112,9 @@ Check it at http://localhost:9870 → *Utilities* → *Browse the file system* �
 | Re-parse a dataset after changing `config/sna.ini` or the loader | add `--rebuild` to `01_build_graph.py` |
 | Add a Python package for jobs | add it to `docker/spark/requirements.txt`, then `docker compose up -d --build` |
 | Pause (keeps HDFS data) | `docker compose stop` |
-| Remove everything (**HDFS data lost**; re-run `load_to_hdfs.ps1`) | `docker compose down` |
+| Remove the containers (HDFS data is kept on volumes) | `docker compose down` |
+| Remove everything, **including HDFS data** (then re-run `load_to_hdfs.ps1`) | `docker compose down -v` |
+| Phase 2: who is in the cluster | `.\scripts\cluster_status.ps1` |
 | Logs of one service | `docker compose logs -f spark-worker-1` |
 | HDFS shell | `docker compose exec namenode hdfs dfs -ls -R /sna` |
 | PySpark shell on the cluster | `docker compose exec spark-client /opt/spark/bin/pyspark` |

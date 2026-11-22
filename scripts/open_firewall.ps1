@@ -1,14 +1,16 @@
-# Phase 2: allow the other cluster PCs through Windows Firewall. Run as ADMINISTRATOR.
-#   .\scripts\open_firewall.ps1 -Role master     # on your laptop
-#   .\scripts\open_firewall.ps1 -Role worker     # on a friend's PC
-#   .\scripts\open_firewall.ps1 -Remove          # remove the rule when you are done
-# Re-run it when an IP in .env changes: it replaces the old rule.
+# Phase 2: let the other cluster PCs through Windows Firewall. Run ONCE per PC,
+# as ADMINISTRATOR:
+#   .\scripts\open_firewall.ps1 -Role master     # on the master laptop
+#   .\scripts\open_firewall.ps1 -Role worker     # on a friend's PC (needs DATANODE_PORT in .env)
+#   .\scripts\open_firewall.ps1 -Remove          # remove the rule when the project is done
 #
-# Safety: Spark and HDFS have no passwords here; whoever reaches these ports can
-# run code on this PC. So the rule ONLY accepts the IPs listed in .env. That is why
-# it can apply on any network profile: no need to mark campus Wi-Fi as "Private"
-# (which would also make this PC visible for file sharing to everyone on it).
-# Remove the rule when the project is done (-Remove).
+# The rule accepts "LocalSubnet": any device on the network this PC is connected to
+# right now. So it keeps working when the hotspot hands out new IPs (no re-run needed).
+#
+# Safety: Spark and HDFS have no passwords here; whoever reaches these ports can run
+# code on this PC. On your own phone hotspot, "LocalSubnet" is just your team. On a
+# big shared network (campus, cafe) it is everyone there: use your hotspot for the
+# cluster, and run -Remove when the project is done.
 param(
     [ValidateSet("master", "worker")][string]$Role,
     [switch]$Remove,
@@ -29,24 +31,25 @@ if (-not $Role) { throw "Pass -Role master or -Role worker." }
 
 Push-Location $root
 try {
-    # Which ports the OTHER PCs connect to, and who those PCs are.
-    # (Same port numbers as docker-compose*.yml and docker/spark-defaults.conf.)
+    # Which ports the OTHER PCs connect to (same numbers as docker-compose*.yml
+    # and docker/spark-defaults.conf).
     if ($Role -eq "master") {
-        $e = Read-ClusterEnv $EnvFile ".env.master.example" @("FRIEND_A_IP", "FRIEND_B_IP")
-        $peers = @($e.FRIEND_A_IP, $e.FRIEND_B_IP)
-        # 7077 master, 7079 our executor, 7080/7081 driver, 8020/9866 HDFS; the rest are web UIs
-        $ports = @(7077, 7079, 7080, 7081, 8020, 9866, 8080, 8081, 9870, 4040)
+        # 8099 registry, 7077 Spark master, 7079 our executor, 7080/7081 driver,
+        # 8020 NameNode, 9866/9867 our DataNode; the rest are web UIs
+        $ports = @(8099, 7077, 7079, 7080, 7081, 8020, 9866, 9867, 8080, 8081, 9870, 4040)
     }
     else {
-        $e = Read-ClusterEnv $EnvFile ".env.worker.example" @("MASTER_IP", "OTHER_FRIEND_IP")
-        $peers = @($e.MASTER_IP, $e.OTHER_FRIEND_IP)
-        # 7078 worker (master starts executors), 7079 our executor, 8081 worker UI
-        $ports = @(7078, 7079, 8081)
+        $e = Read-ClusterEnv $EnvFile ".env.worker.example" @("DATANODE_PORT")
+        # 7078 worker (master starts executors), 7079 our executor, 8081 worker UI,
+        # then our DataNode: data port, IPC, web UI
+        $ipc = if ($e.DATANODE_IPC_PORT) { $e.DATANODE_IPC_PORT } else { 9867 }
+        $http = if ($e.DATANODE_HTTP_PORT) { $e.DATANODE_HTTP_PORT } else { 9864 }
+        $ports = @(7078, 7079, 8081, [int]$e.DATANODE_PORT, [int]$ipc, [int]$http)
     }
-    $peers = $peers | Sort-Object -Unique
 
     New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP `
-        -LocalPort $ports -RemoteAddress $peers -Profile Any | Out-Null
-    Write-Host "Firewall rule '$ruleName': TCP $($ports -join ', ') open for $($peers -join ', ') only." -ForegroundColor Green
+        -LocalPort $ports -RemoteAddress LocalSubnet -Profile Any | Out-Null
+    Write-Host "Firewall rule '$ruleName': TCP $($ports -join ', ') open for devices on the same network (LocalSubnet)." -ForegroundColor Green
+    Write-Host "No need to run this again when IPs change."
 }
 finally { Pop-Location }

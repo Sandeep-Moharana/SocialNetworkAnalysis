@@ -1,21 +1,26 @@
-# Phase 2: runs on a FRIEND's PC. One Spark worker that joins the master laptop.
+# Phase 2: runs on a FRIEND's PC.
+#   spark-worker  "worker-<NODE_NAME>"   computes: runs Spark executors for the master
+#   datanode      "datanode-<NODE_NAME>" stores:   holds HDFS blocks (2 copies on 2 PCs)
 #
-#   .\scripts\worker_up.ps1
-#   = docker compose -f docker-compose.worker.yml up -d
+#   .\scripts\worker_up.ps1               worker + DataNode
+#   .\scripts\worker_up.ps1 -NoStorage    worker only (computing, no HDFS storage)
+#   = docker compose -f docker-compose.worker.yml [--profile storage] up -d
 #
-# Names and IPs come from .env (copy .env.worker.example). Guide: docs/PHASE2_SETUP.md.
+# NODE_NAME and DATANODE_PORT come from .env (copy .env.worker.example). The IPs
+# (MASTER_IP, OTHER_FRIEND_IP) are written into .env by worker_up.ps1, which asks
+# the master's registry. Guide: docs/PHASE2_SETUP.md.
 #
 # How the networking works (Docker on Windows hides containers behind NAT):
-#   - This worker introduces itself as "worker-<NODE_NAME>". Inside this container
-#     the name means "me" (from hostname:); on every other PC, extra_hosts maps it
-#     to THIS PC's Wi-Fi IP, and the published ports below forward to the container.
-#   - The ports must be the same number on both sides ("7078:7078"), because the
-#     number is part of the address the worker advertises.
-#   - Never add this PC's own name to extra_hosts: the worker could not start
-#     ("Cannot assign requested address").
+#   - Each service introduces itself by NAME. On this PC the name means the
+#     container itself (hostname / network alias); on every other PC, extra_hosts
+#     maps it to THIS PC's Wi-Fi IP, and the published ports forward to the container.
+#   - Ports are the same number on both sides ("7078:7078"), because the number is
+#     part of the address each service announces.
+#   - Never add this PC's own names to extra_hosts: the service could not start
+#     ("Cannot assign requested address") or would talk to itself the long way.
 #
 # This PC needs no code updates: every job sends our Python package and GraphFrames
-# to the executors. Only rebuild (worker_up.ps1 -Build) when docker/spark/ changes.
+# to the executors. Pull + restart only when the files in docker/ or this file change.
 name: sna-worker
 
 services:
@@ -39,10 +44,42 @@ services:
       - "spark-client:${MASTER_IP}"     # the driver: executors fetch tasks + code here
       - "spark-worker-1:${MASTER_IP}"   # the master laptop's own worker (shuffle data)
       - "namenode:${MASTER_IP}"         # HDFS metadata
-      - "datanode:${MASTER_IP}"         # HDFS blocks
-      # The other friend's worker (shuffle data):
+      - "datanode:${MASTER_IP}"         # the master laptop's DataNode
+      # The other friend's PC (shuffle data + HDFS blocks):
       - "worker-${OTHER_FRIEND:?set OTHER_FRIEND in .env}:${OTHER_FRIEND_IP:?set OTHER_FRIEND_IP in .env}"
+      - "datanode-${OTHER_FRIEND}:${OTHER_FRIEND_IP}"
+      # (Our own datanode-<NODE_NAME> is found through its network alias below.)
     restart: unless-stopped             # comes back by itself after a laptop reboot
 
-  # Step 2.4 (planned): a DataNode service here, so this PC also stores HDFS blocks.
-  # Design and open questions: docs/PLAN.md, Phase 2.
+  datanode:
+    profiles: ["storage"]               # only started with --profile storage (worker_up.ps1 does, unless -NoStorage)
+    image: apache/hadoop:3.3.6
+    hostname: datanode-${NODE_NAME}
+    command: ["bash", "/opt/sna-hdfs/start-datanode.sh"]
+    env_file: ./docker/hadoop.env       # same HDFS settings as the master laptop ...
+    environment:                        # ... except this DataNode's name and ports.
+      HDFS-SITE.XML_dfs.datanode.hostname: datanode-${NODE_NAME}
+      # The NameNode sees every remote DataNode arriving from the SAME address
+      # (Docker's NAT on the master laptop) and tells them apart by address + data
+      # port. So each friend needs a DIFFERENT data port (alice 9876, bob 9886, ...).
+      HDFS-SITE.XML_dfs.datanode.address: 0.0.0.0:${DATANODE_PORT:?set DATANODE_PORT in .env}
+      HDFS-SITE.XML_dfs.datanode.ipc.address: 0.0.0.0:${DATANODE_IPC_PORT:-9867}
+      HDFS-SITE.XML_dfs.datanode.http.address: 0.0.0.0:${DATANODE_HTTP_PORT:-9864}
+    ports:
+      - "${DATANODE_PORT}:${DATANODE_PORT}"                       # block data
+      - "${DATANODE_IPC_PORT:-9867}:${DATANODE_IPC_PORT:-9867}"   # DataNode IPC (block recovery)
+      - "${DATANODE_HTTP_PORT:-9864}:${DATANODE_HTTP_PORT:-9864}" # DataNode web UI
+    volumes:
+      - ./docker/hdfs:/opt/sna-hdfs:ro
+      - hdfs-data:/hdfs                 # this PC's blocks survive restarts
+    extra_hosts:
+      - "namenode:${MASTER_IP}"         # heartbeats + block reports go here
+      - "datanode:${MASTER_IP}"         # the 2nd copy of a block may go to the master's DataNode ...
+      - "datanode-${OTHER_FRIEND}:${OTHER_FRIEND_IP}"   # ... or to the other friend's
+    networks:
+      default:
+        aliases: ["datanode-${NODE_NAME}"]   # so OUR spark-worker reaches it directly
+    restart: unless-stopped
+
+volumes:
+  hdfs-data:

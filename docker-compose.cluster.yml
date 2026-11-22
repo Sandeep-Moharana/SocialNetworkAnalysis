@@ -2,33 +2,46 @@
 #
 #   .\scripts\cluster_up.ps1
 #   = docker compose -f docker-compose.yml -f docker-compose.cluster.yml up -d
+#     (after finding everyone's current IP through the registry)
 #
 # What it adds to docker-compose.yml:
-#   1. extra_hosts: how our containers find the friends' PCs. A friend's worker
-#      introduces itself as "worker-<name>"; here that name means their Wi-Fi IP.
-#   2. spark-worker-2 is switched off: one worker per PC (it also could not
-#      publish port 7079, which spark-worker-1 already uses).
+#   1. registry: tells the friends' PCs everyone's current IP (port 8099), so
+#      nobody types IPs when the hotspot hands out new ones.
+#   2. extra_hosts: how our containers find the friends' PCs. A friend's PC runs
+#      "worker-<name>" (Spark) and "datanode-<name>" (HDFS); here both names mean
+#      that friend's Wi-Fi IP.
+#   3. spark-worker-2 is switched off: one worker per PC.
 #
-# Names and IPs come from .env (copy .env.master.example). Guide: docs/PHASE2_SETUP.md.
-# The HDFS containers are deliberately untouched, so switching between Phase 1 and
-# Phase 2 mode never recreates them (that would wipe HDFS).
+# Friend names come from .env (copy .env.master.example); the IPs are written
+# there by cluster_up.ps1. A friend who has not joined yet maps to 127.0.0.1
+# (harmless). Guide: docs/PHASE2_SETUP.md.
 
-# Every container that talks to executors on other PCs needs the friends' names:
-#   spark-master   -> starts executors on worker-<name>
-#   spark-client   -> the driver fetches results from executors
-#   spark-worker-1 -> our executor exchanges shuffle data with theirs
 x-friends: &friends
   extra_hosts:
-    - "worker-${FRIEND_A:?set FRIEND_A in .env}:${FRIEND_A_IP:?set FRIEND_A_IP in .env}"
-    - "worker-${FRIEND_B:?set FRIEND_B in .env}:${FRIEND_B_IP:?set FRIEND_B_IP in .env}"
-    # Step 2.4 (HDFS on friends' PCs) adds "datanode-<name>" lines here.
+    - "worker-${FRIEND_A:?set FRIEND_A in .env}:${FRIEND_A_IP:-127.0.0.1}"
+    - "datanode-${FRIEND_A}:${FRIEND_A_IP:-127.0.0.1}"
+    - "worker-${FRIEND_B:?set FRIEND_B in .env}:${FRIEND_B_IP:-127.0.0.1}"
+    - "datanode-${FRIEND_B}:${FRIEND_B_IP:-127.0.0.1}"
 
 services:
-  spark-master:
-    <<: *friends
-  spark-client:
-    <<: *friends
-  spark-worker-1:
-    <<: *friends
+  registry:                         # scripts/container/registry.py, standard-library Python
+    image: sna-spark:3.5.3
+    command: ["python3", "/opt/sna/registry.py"]
+    environment:
+      MASTER_IP: ${MASTER_IP:-}                 # written to .env by cluster_up.ps1
+      EXPECTED: "${FRIEND_A},${FRIEND_B}"
+    ports:
+      - "8099:8099"
+    volumes:
+      - ./scripts/container:/opt/sna:ro
+
+  # Spark: talks to executors on the friends' PCs, and reads/writes their HDFS blocks.
+  spark-master:   { <<: *friends }
+  spark-client:   { <<: *friends }   # the driver
+  spark-worker-1: { <<: *friends }   # our executor exchanges shuffle data with theirs
+  # HDFS: 'hdfs dfs -put' (runs in namenode) writes blocks to friends' DataNodes, and
+  # our DataNode copies blocks to theirs (2nd replica).
+  namenode:       { <<: *friends }
+  datanode:       { <<: *friends }
   spark-worker-2:
     scale: 0

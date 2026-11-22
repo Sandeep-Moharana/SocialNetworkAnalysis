@@ -248,24 +248,37 @@ WSL instead of Docker Desktop, so a different setup per PC), and Docker Swarm ov
 | Step | Work | Definition of done |
 |---|---|---|
 | 2.1 Cluster config ✅ | names + fixed ports, `docker-compose.cluster.yml` (master), `docker-compose.worker.yml` (friend), `.env` templates, `cluster_up` / `worker_up` / `open_firewall` scripts, guide | Phase 1 unchanged (smoke test, 35 tests). **Simulated friend on one laptop** (worker reached only through the Wi-Fi IP): smoke test + full pipeline pass |
-| 2.2 First friend | one friend's PC joins | Smoke test lists `worker-<friend>` |
+| 2.2 First friend ✅ | one friend's PC joins | The friend's executor runs tasks. `run_all.ps1` passes with identical results (362 s vs 121 s over a phone hotspot: network-bound, see README) |
 | 2.3 Second friend | 3 PCs, 6 cores | `run_all.ps1` timings vs the 121 s baseline. Fault-tolerance demo: stop a worker during job 02 and the job still finishes |
-| 2.4 HDFS across PCs | a DataNode on each friend's PC, replication 2 | Blocks stored on 2 PCs (`hdfs fsck -files -blocks -locations`). Stop one friend and the data is still readable |
+| 2.4 HDFS across PCs 🧪 built, simulated | a DataNode on each friend's PC, replication 2, HDFS on volumes | Blocks stored on 2 PCs (`hdfs fsck -files -blocks -locations`). Stop one friend and the data is still readable |
 | 2.5 Results | README section, tag `v0.2` | |
+| 2.6 Automatic IP discovery ✅ | registry on the master (port 8099), subnet scan, firewall for LocalSubnet, DataNode optional (`-NoStorage`) | Tested on one laptop: registrations, .env updates, container hosts, real hotspot scan finds the master in ~1.6 s |
 
-**Design for 2.4 (distributed HDFS).** Prepared in 2.1, but not built yet:
-- Names: a friend's DataNode is `datanode-<NODE_NAME>` (`dfs.datanode.hostname`), next to
-  `worker-<NODE_NAME>`. `extra_hosts` gets one more line per friend.
-- Clients already connect to DataNodes by name (`dfs.client.use.datanode.hostname`, set in 2.1).
-  DataNodes also copy blocks to each other, so add `dfs.datanode.use.datanode.hostname=true`.
-- **NAT catch:** the NameNode sees every remote DataNode arriving from the same Docker gateway IP,
-  and it tells DataNodes apart by *IP + data port*. So each PC needs its **own HDFS ports**
-  (e.g. master 9866/9867, alice 9876/9877, bob 9886/9887) via `dfs.datanode.address` and
-  `dfs.datanode.ipc.address`, kept in `.env`.
-- **Persistent volumes** for the NameNode and DataNode directories, so recreating a container no
-  longer wipes HDFS. The `apache/hadoop` image runs as uid 1000 and Docker creates new volumes as root,
-  so the volume directories need a fix-permissions step.
-- Replication 2: every block lives on 2 PCs, so one laptop can leave.
+**Distributed HDFS (2.4): how it is built.**
+
+```
+  master laptop                    alice's PC                 bob's PC
+  namenode  (metadata only) ◄──── heartbeats ──── datanode-alice      datanode-bob
+  datanode  (port 9866)     ◄──── block copies ──► (port 9876)  ◄────► (port 9886)
+```
+- **Names:** a friend's DataNode is `datanode-<NODE_NAME>` (`dfs.datanode.hostname`), next to
+  `worker-<NODE_NAME>`. Clients *and* DataNodes connect to DataNodes by name
+  (`dfs.client.use.datanode.hostname`, `dfs.datanode.use.datanode.hostname`).
+- **NAT catch, confirmed in the simulation:** the NameNode sees every friend's DataNode arriving from
+  `172.18.0.1` (Docker's gateway), and it tells DataNodes apart by *IP + data port*. So each friend
+  has its **own data port** (`DATANODE_PORT` in `.env`: master 9866, alice 9876, bob 9886).
+  With the same port, two friends would keep replacing each other.
+- **Persistent volumes** (`hdfs-name`, `hdfs-data`) mounted at `/hdfs`. `docker/hdfs/start-*.sh`
+  `sudo chown` the new volume (the image runs as uid 1000) and format the NameNode only on the very
+  first start, with a fixed cluster id. HDFS survives `docker compose down` and mode switches.
+- **Replication 2** (`hadoop.env` for the CLI, `spark.hadoop.dfs.replication` for Spark, which
+  would otherwise ask for Hadoop's default of 3).
+- **Laptops leave:** a DataNode is *stale* after 30 s (avoided for reads/writes) and *dead* after
+  2.5 min instead of 10.5 (`heartbeat.recheck-interval`); then the NameNode re-copies its blocks.
+- **Not done (Phase 3 idea): data locality.** Spark runs a task "next to" its data when the executor's
+  host equals the block's host. Here they are `worker-alice` vs `datanode-alice`, so Spark doesn't
+  see them as the same machine. Sharing one network namespace (`network_mode: service:spark-worker`)
+  and one name would fix it. That matters for big datasets on slow Wi-Fi.
 - Fallback if NAT keeps fighting: a PC running Linux (or Docker Engine in WSL with mirrored
   networking) uses `network_mode: host`, with no NAT at all. The application code does not change either way.
 

@@ -3,9 +3,11 @@
 #
 #   docker compose up -d      start the cluster
 #   docker compose ps         see what's running
-#   docker compose stop       stop, KEEP HDFS data
-#   docker compose down       stop and DELETE containers (HDFS data is lost;
-#                             re-run scripts\load_to_hdfs.ps1 afterwards)
+#   docker compose stop       stop
+#   docker compose down       stop and delete the containers. HDFS data is KEPT
+#                             (it lives on the volumes hdfs-name + hdfs-data)
+#   docker compose down -v    ... and DELETE the HDFS data too (then re-run
+#                             scripts\load_to_hdfs.ps1)
 #
 # Phase 2 (friends' PCs as workers) reuses this file plus docker-compose.cluster.yml:
 # run scripts\cluster_up.ps1. Guide: docs/PHASE2_SETUP.md.
@@ -29,23 +31,28 @@ services:
   namenode:                       # keeps the file-system metadata (which blocks are where)
     image: apache/hadoop:3.3.6
     hostname: namenode
-    command: ["hdfs", "namenode"]
+    # Our start script: formats HDFS on the very first start only, then runs the NameNode.
+    command: ["bash", "/opt/sna-hdfs/start-namenode.sh"]
     env_file: ./docker/hadoop.env
-    environment:
-      ENSURE_NAMENODE_DIR: /tmp/hadoop-hadoop/dfs/name   # formats HDFS on first start only
     ports:
       - "9870:9870"               # HDFS web UI -> http://localhost:9870
-      - "8020:8020"               # HDFS metadata RPC: executors on other PCs ask "where are the blocks?"
+      - "8020:8020"               # HDFS metadata RPC: executors + DataNodes on other PCs connect here
     volumes:
       - ./data:/data              # host data/ folder, used by 'hdfs dfs -put'
+      - ./docker/hdfs:/opt/sna-hdfs:ro
+      - hdfs-name:/hdfs           # metadata survives container re-creation
 
   datanode:                       # stores the actual data blocks
     image: apache/hadoop:3.3.6
     hostname: datanode
-    command: ["hdfs", "datanode"]
+    command: ["bash", "/opt/sna-hdfs/start-datanode.sh"]
     env_file: ./docker/hadoop.env
     ports:
-      - "9866:9866"               # block data: executors on other PCs read/write files here
+      - "9866:9866"               # block data: other PCs read/write blocks here
+      - "9867:9867"               # DataNode IPC: other DataNodes (block recovery)
+    volumes:
+      - ./docker/hdfs:/opt/sna-hdfs:ro
+      - hdfs-data:/hdfs           # blocks survive container re-creation
     depends_on: [namenode]
 
   # ------------------------------------------------------------------
@@ -100,3 +107,9 @@ services:
       - ./:/app                   # our code (jobs/, src/) is visible inside the container
       - ./docker/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
     depends_on: [spark-master, namenode]
+
+# HDFS lives here, outside the containers: kept by "docker compose down",
+# deleted only by "docker compose down -v".
+volumes:
+  hdfs-name:
+  hdfs-data:
